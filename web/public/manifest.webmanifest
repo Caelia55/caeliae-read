@@ -1,0 +1,10 @@
+{
+  "name": "Caeliae Read",
+  "short_name": "Caeliae Read",
+  "start_url": "/reader/",
+  "scope": "/reader/",
+  "display": "standalone",
+  "background_color": "#f4f0e8",
+  "theme_color": "#f4f0e8",
+  "description": "A responsive local-first paper reading surface."
+}

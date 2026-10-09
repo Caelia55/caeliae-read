@@ -1,0 +1,49 @@
+:root { color: #302d28; background: #f4f0e8; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; }
+button, input, select, textarea { font: inherit; }
+button, a { -webkit-tap-highlight-color: transparent; }
+.reading-page { width: min(1120px, calc(100% - 40px)); margin: 0 auto; padding: 48px 0 72px; }
+.reading-page-header { display: flex; align-items: end; justify-content: space-between; gap: 28px; margin-bottom: 28px; }
+.reading-page-header h1 { margin: 7px 0 8px; font-family: Georgia, serif; font-size: clamp(32px, 5vw, 54px); font-weight: 500; letter-spacing: -.04em; }
+.reading-page-header h1 span { color: #81796d; font-size: .55em; letter-spacing: 0; }
+.reading-page-header p { margin: 0; color: #81796d; font-size: 13px; }
+.reading-eyebrow, .reading-panel-kicker { color: #81796d; font-size: 10px; letter-spacing: .16em; }
+.reading-page-header nav { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; justify-content: end; }
+.reading-page-header a { color: #625b51; font-size: 13px; text-decoration: none; }
+.reading-page-header a:hover { color: #302d28; }
+.button { min-height: 38px; padding: 0 14px; border: 1px solid rgba(63,57,48,.2); border-radius: 9px; cursor: pointer; }
+.button-primary { border-color: #302d28; background: #302d28; color: #fffdf8; }
+.button-quiet { background: #fffdf8; color: #302d28; }
+.button:disabled { cursor: default; opacity: .45; }
+.reading-task-list { display: grid; gap: 10px; }
+.reading-task-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 19px 22px; border: 1px solid rgba(63,57,48,.14); border-radius: 14px; background: rgba(255,253,248,.72); box-shadow: 0 8px 24px rgba(47,43,36,.04); }
+.reading-task-row:hover { border-color: rgba(63,57,48,.27); background: #fffdf8; }
+.reading-task-main { min-width: 0; }
+.reading-task-title-line { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.reading-task-title-line h2 { min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 17px; font-weight: 650; }
+.reading-task-main p { margin: 7px 0 8px; overflow: hidden; color: #746d62; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.reading-task-meta { display: flex; flex-wrap: wrap; gap: 12px; color: #938a7e; font-size: 11px; }
+.reading-status { flex: 0 0 auto; padding: 4px 8px; border-radius: 999px; background: rgba(128,147,164,.12); color: #3e6074; font-size: 10px; }
+.reading-status-draft { background: rgba(155,107,35,.12); color: #8e611f; }
+.reading-status-archived { background: rgba(63,57,48,.08); color: #81796d; }
+.reading-task-open { flex: 0 0 auto; color: #3e6074; font-size: 13px; text-decoration: none; }
+.reading-empty { display: grid; justify-items: center; gap: 9px; padding: 86px 20px; border: 1px dashed rgba(63,57,48,.22); border-radius: 16px; text-align: center; }
+.reading-empty > span { display: grid; width: 54px; height: 68px; place-items: center; border: 1px solid #81796d; border-radius: 4px 13px 4px 4px; font-family: Georgia, serif; color: #81796d; }
+.reading-empty h2 { margin: 8px 0 0; font-family: Georgia, serif; font-weight: 500; }
+.reading-empty p { margin: 0 0 8px; color: #81796d; font-size: 13px; }
+.reading-create-form { display: grid; gap: 14px; max-width: 680px; margin: 0 0 24px auto; padding: 20px; border: 1px solid rgba(63,57,48,.16); border-radius: 14px; background: #fffdf8; box-shadow: 0 12px 32px rgba(47,43,36,.08); }
+.reading-form-heading, .reading-form-footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.reading-form-heading h2 { margin: 5px 0 0; font-family: Georgia, serif; font-weight: 500; }
+.reading-close { border: 0; background: transparent; color: #81796d; font-size: 22px; cursor: pointer; }
+.reading-create-form label { display: grid; gap: 6px; color: #625b51; font-size: 12px; }
+.reading-create-form input, .reading-create-form select, .reading-create-form textarea { width: 100%; padding: 9px 10px; border: 1px solid rgba(63,57,48,.2); border-radius: 8px; background: #fff; color: #302d28; }
+.reading-form-footer { color: #a43d38; font-size: 12px; }
+.reading-form-footer > div { display: flex; gap: 8px; }
+@media (max-width: 680px) {
+  .reading-page { width: min(100% - 24px, 560px); padding-top: 28px; }
+  .reading-page-header { display: block; }
+  .reading-page-header nav { justify-content: start; margin-top: 18px; }
+  .reading-task-row { align-items: start; padding: 16px; }
+  .reading-task-open { padding-top: 5px; }
+}

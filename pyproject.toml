@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "caeliae-read"
+version = "0.1.0"
+description = "Caeliae Read: local-first PDF co-reading with HTTP and scoped MCP annotation tools"
+license = "MIT"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "fastapi>=0.116,<1",
+  "mcp>=1.17,<2",
+  "pydantic>=2.11,<3",
+  "pypdf>=6,<7",
+  "python-multipart>=0.0.20,<1",
+  "uvicorn>=0.35,<1",
+]
+
+[project.optional-dependencies]
+test = [
+  "httpx>=0.28,<1",
+  "pytest>=8.4,<9",
+]
+
+[project.scripts]
+caeliae-read-api = "caeliae_read.api.app:main"
+caeliae-read-mcp = "caeliae_read.mcp.server:main"
+coread-api = "caeliae_read.api.app:main"
+coread-mcp = "caeliae_read.mcp.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
