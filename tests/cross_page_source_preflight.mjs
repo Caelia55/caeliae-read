@@ -63,7 +63,7 @@ try {
     await ensureToolbarExpanded();
     while (await page.locator(".pdf-zoom-controls > span").textContent() !== `${zoom}%`) await page.getByRole("button", { name: "＋" }).click();
     await page.locator(`[data-annotation-id="${userId}"]`).first().waitFor({ timeout: 7000 });
-    await page.locator(`[data-annotation-id="${userId}"]`).first().click();
+    await page.locator(`[data-annotation-id="${userId}"]`).first().locator(".annotation-entry-dot").click();
     assert.equal(await page.locator(".annotation-switcher button").count(), 2);
     await page.locator(".annotation-switcher button").filter({ hasText: "AI" }).click();
     await page.getByRole("button", { name: "回到原文" }).click();
@@ -122,7 +122,7 @@ try {
     while (await page.locator(".pdf-zoom-controls > span").textContent() !== `${zoom}%`) await page.getByRole("button", { name: "＋" }).click();
     const lowerMark = page.locator(`[data-annotation-id="${lowerAnnotation.annotation_id}"]`).first();
     await lowerMark.waitFor({ timeout: 7000 });
-    await lowerMark.click();
+    await lowerMark.locator(".annotation-entry-dot").click();
     await page.getByRole("button", { name: "上一页" }).click();
     await page.locator('.pdf-page canvas[aria-label="论文第 1 页"]').waitFor();
     const lowerDetached = await snapshot();
