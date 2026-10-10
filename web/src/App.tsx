@@ -346,8 +346,35 @@ function correctSelectionEndpointAtPointer(
   const selection = document.getSelection();
   if (!selection || selection.isCollapsed || !selection.rangeCount) return false;
   const anchorNode = selection.anchorNode;
+  if (!anchorNode || !layer.contains(anchorNode)) return false;
+
+  // A downward native selection can autoscroll the page-stage into its bottom
+  // padding. Chromium then leaves the focus on a non-text node even though the
+  // drag started in this text layer. Preserve the native anchor and finish at
+  // the last rendered text node when the pointer is below the page itself.
+  const layerRect = layer.getBoundingClientRect();
+  if (event.clientY > layerRect.bottom) {
+    const spans = Array.from(layer.querySelectorAll<HTMLSpanElement>("span"));
+    let finalNode: ChildNode | null = null;
+    for (let index = spans.length - 1; index >= 0; index -= 1) {
+      if (spans[index].lastChild instanceof Text) {
+        finalNode = spans[index].lastChild;
+        break;
+      }
+    }
+    if (finalNode instanceof Text
+      && compareSelectionPoints(anchorNode, selection.anchorOffset, finalNode, finalNode.data.length) < 0) {
+      try {
+        selection.setBaseAndExtent(anchorNode, selection.anchorOffset, finalNode, finalNode.data.length);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+  }
+
   const focusNode = selection.focusNode;
-  if (!anchorNode || !(focusNode instanceof Text) || !layer.contains(anchorNode) || !layer.contains(focusNode)) return false;
+  if (!(focusNode instanceof Text) || !layer.contains(focusNode)) return false;
 
   const focusSpan = focusNode.parentElement?.closest("span");
   if (!focusSpan || !layer.contains(focusSpan)) return false;

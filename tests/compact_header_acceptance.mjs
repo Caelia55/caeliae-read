@@ -93,7 +93,7 @@ try {
   await page.waitForTimeout(300);
 
   await resetTop();
-  await page.locator(".annotation-mark").first().click();
+  await page.locator(".annotation-mark .annotation-entry-dot").first().click();
   await page.waitForTimeout(300);
   await page.locator(".page-stage").evaluate((node) => node.scrollBy(0, 140));
   await page.waitForTimeout(100);

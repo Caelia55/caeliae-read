@@ -104,7 +104,7 @@ try {
   const restoredByButton = await snapshot();
   if (restoredByButton.slim) throw new Error("expand button did not restore toolbar");
 
-  await page.locator(".annotation-mark").first().click();
+  await page.locator(".annotation-mark .annotation-entry-dot").first().click();
   const cardOpen = await snapshot();
   if (!cardOpen.annotationCardOpen || cardOpen.slim) throw new Error("annotation card did not pin expanded toolbar");
   await page.waitForTimeout(300);

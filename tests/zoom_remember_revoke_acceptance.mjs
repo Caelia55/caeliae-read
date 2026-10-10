@@ -64,7 +64,7 @@ try {
   const at200 = await inspectAlignment(200);
   await page.screenshot({ path: `${outputDir}/02-remember-200.png`, fullPage: true });
 
-  await mark.click();
+  await mark.locator(".annotation-entry-dot").click();
   const activeHighlightOpacity = await mark.evaluate((node) => Number(getComputedStyle(node, "::before").opacity));
   if (activeHighlightOpacity < .2) throw new Error("active annotation highlight did not appear");
   const card = page.locator(".annotation-card.card-assistant");

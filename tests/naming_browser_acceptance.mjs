@@ -30,7 +30,7 @@ try {
   const id = annotation.annotation_id;
   const mark = page.locator(`[data-annotation-id="${id}"]`).first();
   await mark.waitFor({ timeout: 7000 });
-  await page.locator(".annotation-mark").last().click();
+  await page.locator(".annotation-mark .annotation-entry-dot").last().click();
   await page.locator(".annotation-switcher button").filter({ hasText: "AI" }).click();
   await page.locator(".annotation-card.card-assistant").waitFor();
   assert.equal(await page.locator(".annotation-switcher button").count(), 2);
@@ -64,7 +64,7 @@ try {
   assert.equal(after.paper, before.paper); assert.equal(after.session, before.session);
   assert.equal(after.oldPaper, before.paper); assert.equal(after.oldSession, before.session);
   await page.getByRole("button", { name: "上一页" }).click();
-  await mark.waitFor(); await page.locator(".annotation-mark").last().click();
+  await mark.waitFor(); await page.locator(".annotation-mark .annotation-entry-dot").last().click();
   await page.locator(".annotation-switcher button").filter({ hasText: "AI" }).click();
   await page.getByRole("button", { name: "回到原文" }).click();
   await page.locator(".annotation-card.card-assistant").waitFor();

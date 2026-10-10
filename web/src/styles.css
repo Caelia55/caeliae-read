@@ -277,7 +277,7 @@ h1 { margin: 0; font-family: Georgia, "Times New Roman", serif; font-size: clamp
 .selection-preview-layer { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
 .selection-preview-quad { position: absolute; display: block; border-radius: 2px; background: rgba(205, 151, 74, .42); mix-blend-mode: multiply; pointer-events: none; }
 .annotation-layer { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
-.annotation-mark { appearance: none; -webkit-appearance: none; position: absolute; min-width: 0; min-height: 0; width: auto; height: 14px; margin: 0; padding: 0; border: 0; border-radius: 0; box-sizing: border-box; background: transparent; box-shadow: none; transform: translateY(-8%); pointer-events: auto; cursor: pointer; writing-mode: horizontal-tb; }
+.annotation-mark { appearance: none; -webkit-appearance: none; position: absolute; min-width: 0; min-height: 0; width: auto; height: 14px; margin: 0; padding: 0; border: 0; border-radius: 0; box-sizing: border-box; background: transparent; box-shadow: none; transform: translateY(-8%); pointer-events: none; writing-mode: horizontal-tb; }
 .annotation-mark::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 1px; border-radius: 2px; background: var(--annotation-user-color); opacity: .62; pointer-events: none; }
 .annotation-user-style-primary { --annotation-user-color: var(--annotation-user-primary-color); color: var(--annotation-user-primary-color); }
 .annotation-user-style-secondary { --annotation-user-color: var(--annotation-user-secondary-color); color: var(--annotation-user-secondary-color); }
@@ -286,7 +286,7 @@ h1 { margin: 0; font-family: Georgia, "Times New Roman", serif; font-size: clamp
 .annotation-user-mark-highlight:hover::after, .annotation-user-mark-highlight:focus-visible::after, .annotation-user-mark-highlight.is-focused::after { height: 100%; opacity: .42; }
 .annotation-short::after { left: 10px; right: 10px; }
 .annotation-mark:hover::after, .annotation-mark:focus-visible::after { opacity: .95; height: 2px; }
-.annotation-entry-dot { position: absolute; right: -3px; bottom: -2px; width: 5px; height: 5px; border-radius: 50%; background: var(--annotation-user-color); opacity: .72; box-shadow: none; pointer-events: none; }
+.annotation-entry-dot { position: absolute; right: -4px; bottom: -3px; width: 8px; height: 8px; border-radius: 50%; background: var(--annotation-user-color); opacity: .72; box-shadow: none; pointer-events: auto; cursor: pointer; }
 .annotation-mark:hover .annotation-entry-dot, .annotation-mark:focus-visible .annotation-entry-dot, .annotation-mark.is-focused .annotation-entry-dot { width: 8px; height: 8px; right: -4px; bottom: -3px; opacity: 1; box-shadow: 0 0 0 3px rgba(255,253,248,.75); }
 .annotation-short .annotation-entry-dot { right: 6px; }
 .annotation-mark.is-focused::before { content: ""; position: absolute; inset: 0; background: currentColor; opacity: .12; border-radius: 2px; pointer-events: none; }
@@ -301,7 +301,7 @@ h1 { margin: 0; font-family: Georgia, "Times New Roman", serif; font-size: clamp
 .annotation-mark.annotation-user-mark-highlight:focus-visible::after,
 .annotation-mark.annotation-user-mark-highlight.is-focused::after { height: 100%; opacity: .42; }
 .annotation-mark.annotation-user-mark-highlight.is-focused::before { opacity: 0; }
-.annotation-mark.annotation-user-mark-highlight .annotation-entry-dot { display: none; }
+.annotation-mark.annotation-user-mark-highlight .annotation-entry-dot { opacity: .62; }
 /* User underline presentation: clearer in dense paper text, while remaining
    intentionally quieter than the persistent highlight background. */
 .annotation-mark.annotation-user-style-primary:not(.annotation-user-mark-highlight)::after,

@@ -64,7 +64,7 @@ try {
   if (rendered.underlineColor !== "rgb(128, 147, 164)" || rendered.rememberColor !== "rgb(216, 201, 120)" || Number(rendered.rememberOpacity) > 0.05) throw new Error("assistant remember default styling is too strong");
   if (Math.abs(rendered.normalized.x - rendered.expected.x) > 0.01 || Math.abs(rendered.normalized.width - rendered.expected.width) > 0.01) throw new Error("rendered annotation anchor drifted");
 
-  await mark.click();
+  await mark.locator(".annotation-entry-dot").click();
   const activeRememberOpacity = await mark.evaluate((node) => Number(getComputedStyle(node, "::before").opacity));
   if (activeRememberOpacity < 0.2) throw new Error("assistant remember active highlight did not appear");
   const card = page.locator(".annotation-card.card-assistant");
