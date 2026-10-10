@@ -286,9 +286,10 @@ h1 { margin: 0; font-family: Georgia, "Times New Roman", serif; font-size: clamp
 .annotation-user-mark-highlight:hover::after, .annotation-user-mark-highlight:focus-visible::after, .annotation-user-mark-highlight.is-focused::after { height: 100%; opacity: .42; }
 .annotation-short::after { left: 10px; right: 10px; }
 .annotation-mark:hover::after, .annotation-mark:focus-visible::after { opacity: .95; height: 2px; }
-.annotation-entry-dot { position: absolute; right: -4px; bottom: -3px; width: 8px; height: 8px; border-radius: 50%; background: var(--annotation-user-color); opacity: .72; box-shadow: none; pointer-events: auto; cursor: pointer; }
-.annotation-mark:hover .annotation-entry-dot, .annotation-mark:focus-visible .annotation-entry-dot, .annotation-mark.is-focused .annotation-entry-dot { width: 8px; height: 8px; right: -4px; bottom: -3px; opacity: 1; box-shadow: 0 0 0 3px rgba(255,253,248,.75); }
-.annotation-short .annotation-entry-dot { right: 6px; }
+.annotation-entry-target { position: absolute; right: -12px; bottom: -11px; width: 16px; height: 16px; pointer-events: auto; cursor: pointer; }
+.annotation-entry-dot { position: absolute; left: 0; top: 0; width: 8px; height: 8px; border-radius: 50%; background: var(--annotation-user-color); opacity: .72; box-shadow: none; pointer-events: auto; cursor: pointer; }
+.annotation-mark:hover .annotation-entry-dot, .annotation-mark:focus-visible .annotation-entry-dot, .annotation-mark.is-focused .annotation-entry-dot { width: 8px; height: 8px; opacity: 1; box-shadow: 0 0 0 3px rgba(255,253,248,.75); }
+.annotation-short .annotation-entry-target { right: -2px; }
 .annotation-mark.is-focused::before { content: ""; position: absolute; inset: 0; background: currentColor; opacity: .12; border-radius: 2px; pointer-events: none; }
 .annotation-assistant::after { background: var(--annotation-assistant-color); }
 .annotation-assistant .annotation-entry-dot { background: var(--annotation-assistant-color); }
@@ -343,8 +344,6 @@ h1 { margin: 0; font-family: Georgia, "Times New Roman", serif; font-size: clamp
 .annotation-mark.annotation-user-style-tertiary:not(.annotation-user-mark-highlight).is-focused .annotation-entry-dot {
   width: 6px;
   height: 6px;
-  right: -4px;
-  bottom: -3px;
   opacity: .74;
   box-shadow: none;
 }

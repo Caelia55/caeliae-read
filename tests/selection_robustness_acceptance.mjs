@@ -93,10 +93,52 @@ try {
   assert(reselectedText.includes("Selected passage"), "annotated text was not reselectable");
   await page.keyboard.press("Escape");
 
-  const entryDot = mark.locator(".annotation-entry-dot");
+  const entryTarget = mark.locator(".annotation-entry-target");
+  const entryDot = entryTarget.locator(".annotation-entry-dot");
+  const dotGeometry = await entryTarget.evaluate((target) => {
+    const targetRect = target.getBoundingClientRect();
+    const dot = target.querySelector(".annotation-entry-dot");
+    const rect = dot.getBoundingClientRect();
+    const points = [
+      { x: targetRect.left + 1, y: targetRect.top + targetRect.height / 2 },
+      { x: targetRect.right - 1, y: targetRect.top + targetRect.height / 2 },
+      { x: targetRect.left + targetRect.width / 2, y: targetRect.top + 1 },
+      { x: targetRect.left + targetRect.width / 2, y: targetRect.bottom - 1 },
+    ];
+    return {
+      visual: { width: rect.width, height: rect.height },
+      target: { width: targetRect.width, height: targetRect.height },
+      haloHits: points.map(({ x, y }) => {
+        const hit = document.elementFromPoint(x, y);
+        return { tag: hit?.tagName ?? null, isTarget: hit === target || hit === dot || Boolean(hit?.closest(".annotation-entry-target")), isTextLayer: Boolean(hit?.closest(".text-layer")) };
+      }),
+    };
+  });
+  assert(dotGeometry.visual.width >= 7 && dotGeometry.visual.width <= 9, `entry dot visual width drifted: ${dotGeometry.visual.width}`);
+  assert(dotGeometry.visual.height >= 7 && dotGeometry.visual.height <= 9, `entry dot visual height drifted: ${dotGeometry.visual.height}`);
+  assert(dotGeometry.target.width >= 15 && dotGeometry.target.width <= 17, `entry target width drifted: ${dotGeometry.target.width}`);
+  assert(dotGeometry.target.height >= 15 && dotGeometry.target.height <= 17, `entry target height drifted: ${dotGeometry.target.height}`);
+  assert(dotGeometry.haloHits.every((hit) => hit.isTarget && !hit.isTextLayer), `entry dot hit halo is incomplete: ${JSON.stringify(dotGeometry.haloHits)}`);
+  const nearbyTextHit = await page.evaluate(() => {
+    const dot = document.querySelector(".annotation-entry-dot");
+    const text = document.querySelector(".text-layer span");
+    if (!dot || !text) return null;
+    const dotRect = dot.getBoundingClientRect();
+    const textRect = text.getBoundingClientRect();
+    const x = Math.max(textRect.left + 2, dotRect.left - 6);
+    const y = textRect.top + textRect.height / 2;
+    const hit = document.elementFromPoint(x, y);
+    return { tag: hit?.tagName ?? null, inTextLayer: Boolean(hit?.closest(".text-layer")) };
+  });
+  assert(nearbyTextHit?.inTextLayer, `nearby text hit was intercepted: ${JSON.stringify(nearbyTextHit)}`);
   await entryDot.click();
   await page.locator(".annotation-card").waitFor();
   assert.equal(await page.locator(".annotation-card").count(), 1, "annotation entry point no longer opens its card");
+  await page.getByRole("button", { name: "关闭批注" }).click();
+  await mark.focus();
+  await page.keyboard.press("Enter");
+  await page.locator(".annotation-card").waitFor();
+  assert.equal(await page.locator(".annotation-card").count(), 1, "annotation mark keyboard activation no longer opens its card");
   await page.close();
 
   const longPdfPath = `${outputDir}/long-selection.pdf`;

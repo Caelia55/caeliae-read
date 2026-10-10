@@ -2254,7 +2254,7 @@ export function App() {
                       ref={(node) => { if (node) markRefs.current.set(annotation.annotation_id, node); else markRefs.current.delete(annotation.annotation_id); }}
                       onClick={() => focusAnnotation(annotation.annotation_id)}
                     >
-                      {index === visualQuads.length - 1 && <span className="annotation-entry-dot" aria-hidden="true" />}
+                      {index === visualQuads.length - 1 && <span className="annotation-entry-target" aria-hidden="true"><span className="annotation-entry-dot" /></span>}
                     </button>
                     ));
                   })}
