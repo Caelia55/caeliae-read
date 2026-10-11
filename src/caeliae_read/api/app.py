@@ -302,17 +302,38 @@ def create_app(service: CaeliaeReadService | None = None) -> FastAPI:
             raise problem(error) from error
 
     @app.get("/api/vocabulary/export")
-    async def export_vocabulary(format: str = "json", search: str | None = None, paper_id: str | None = None) -> Response:
+    async def export_vocabulary(format: str = "json", search: str | None = None, paper_id: str | None = None, detail: str | None = None) -> Response:
+        if detail not in {None, "occurrences"}:
+            raise problem(ValidationError("detail must be occurrences when provided"))
+        if detail is not None and format != "json":
+            raise problem(ValidationError("detail=occurrences is only supported for JSON"))
         try:
             entries = read_service.export_vocabulary(search, paper_id)
         except CaeliaeReadError as error:
             raise problem(error) from error
         if format == "json":
+            if detail == "occurrences":
+                try:
+                    entries = read_service.export_vocabulary_with_occurrences(search, paper_id)
+                except CaeliaeReadError as error:
+                    raise problem(error) from error
+                return Response(json.dumps({"entries": entries}, ensure_ascii=False, indent=2), media_type="application/json", headers={"Content-Disposition": "attachment; filename=caeliae-vocabulary-occurrences.json"})
             return Response(json.dumps({"entries": entries}, ensure_ascii=False, indent=2), media_type="application/json", headers={"Content-Disposition": "attachment; filename=caeliae-vocabulary.json"})
+        if format == "csv-occurrences":
+            try:
+                occurrence_rows = read_service.export_vocabulary_occurrences(search, paper_id)
+            except CaeliaeReadError as error:
+                raise problem(error) from error
+            output = io.StringIO(newline="")
+            fields = ["vocabulary_id", "term", "lemma", "entry_type", "definition", "part_of_speech", "tags", "occurrence_id", "surface_form", "paper_id", "paper_title", "page_number", "context_excerpt", "occurrence_created_at"]
+            writer = csv.DictWriter(output, fieldnames=fields, extrasaction="ignore", lineterminator="\r\n")
+            writer.writeheader()
+            writer.writerows(occurrence_rows)
+            return Response(output.getvalue(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=caeliae-vocabulary-occurrences.csv"})
         if format != "csv":
-            raise problem(ValidationError("format must be json or csv"))
-        output = io.StringIO()
-        fields = ["vocabulary_id", "term", "definition", "part_of_speech", "pronunciation", "examples", "notes", "tags", "source_paper_id", "source_session_id", "source_page_number", "created_at", "updated_at"]
+            raise problem(ValidationError("format must be json, csv, or csv-occurrences"))
+        output = io.StringIO(newline="")
+        fields = ["vocabulary_id", "term", "definition", "part_of_speech", "pronunciation", "examples", "notes", "tags", "source_paper_id", "source_session_id", "source_page_number", "created_at", "updated_at", "lemma", "entry_type", "occurrence_count"]
         writer = csv.DictWriter(output, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()
         for entry in entries:

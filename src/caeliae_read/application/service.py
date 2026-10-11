@@ -539,6 +539,60 @@ class CaeliaeReadService:
     def export_vocabulary(self, search: str | None = None, paper_id: str | None = None) -> list[dict[str, object]]:
         return self.list_vocabulary(search, paper_id)
 
+    def export_vocabulary_with_occurrences(self, search: str | None = None, paper_id: str | None = None) -> list[dict[str, object]]:
+        """Return entry-oriented export records with safe occurrence metadata."""
+        detailed: list[dict[str, object]] = []
+        for entry in self.export_vocabulary(search, paper_id):
+            detail = self.get_vocabulary_detail(str(entry["vocabulary_id"]))
+            export_entry = dict(entry)
+            # The regular JSON export historically includes the legacy source
+            # selection. Detailed exports intentionally stay source-readable,
+            # but do not expose normalized geometry or the full selection blob.
+            export_entry.pop("source_selection", None)
+            export_entry["occurrences"] = [
+                {
+                    key: occurrence.get(key)
+                    for key in (
+                        "occurrence_id",
+                        "surface_form",
+                        "paper_id",
+                        "paper_title",
+                        "page_number",
+                        "context_excerpt",
+                        "created_at",
+                    )
+                }
+                for occurrence in detail["occurrences"]  # type: ignore[index]
+            ]
+            detailed.append(export_entry)
+        return detailed
+
+    def export_vocabulary_occurrences(self, search: str | None = None, paper_id: str | None = None) -> list[dict[str, object]]:
+        """Return one safe, deterministic export row per persisted occurrence."""
+        rows: list[dict[str, object]] = []
+        for entry in self.export_vocabulary(search, paper_id):
+            detail = self.get_vocabulary_detail(str(entry["vocabulary_id"]))
+            for occurrence in detail["occurrences"]:  # type: ignore[index]
+                rows.append(
+                    {
+                        "vocabulary_id": entry["vocabulary_id"],
+                        "term": entry["term"],
+                        "lemma": entry.get("lemma"),
+                        "entry_type": entry.get("entry_type", "word"),
+                        "definition": entry.get("definition"),
+                        "part_of_speech": entry.get("part_of_speech"),
+                        "tags": " | ".join(entry.get("tags", [])),
+                        "occurrence_id": occurrence["occurrence_id"],
+                        "surface_form": occurrence["surface_form"],
+                        "paper_id": occurrence["paper_id"],
+                        "paper_title": occurrence["paper_title"],
+                        "page_number": occurrence["page_number"],
+                        "context_excerpt": occurrence["context_excerpt"],
+                        "occurrence_created_at": occurrence["created_at"],
+                    }
+                )
+        return rows
+
     def record_vocabulary_review(self, payload: dict[str, object]) -> dict[str, object]:
         vocabulary_id = require_uuid(str(payload.get("vocabulary_id")), "vocabulary_id")
         review_session_id = require_uuid(str(payload.get("review_session_id")), "review_session_id")

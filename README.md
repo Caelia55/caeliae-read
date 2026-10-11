@@ -16,8 +16,15 @@ The reader is organized around three areas:
   annotations, sticky notes, Summary Notes (`大意`), and Annotation Index.
 - **Reading** — Reading tasks, submissions, answers, lifecycle state, and
   feedback.
-- **Vocabulary** — vocabulary CRUD, source context, search, JSON/CSV export,
-  and local Study/Review.
+- **Vocabulary** — vocabulary CRUD, source context, search, entry-oriented
+  JSON/CSV export, and local Study/Review. An entry may retain multiple source
+  occurrences; `lemma` is optional and user-confirmed, with no automatic merge.
+
+The default vocabulary export remains one record/row per entry. Occurrence-aware
+exports are explicit: use `GET /api/vocabulary/export?format=json&detail=occurrences`
+for entries with safe occurrence metadata, or
+`GET /api/vocabulary/export?format=csv-occurrences` for one row per stored
+occurrence. Manual entries without an occurrence are omitted from the latter.
 
 The current release also includes an optional local stdio MCP integration for
 scoped Reader and Reading capabilities. It is not required to use the browser
