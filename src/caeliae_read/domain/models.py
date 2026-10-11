@@ -133,12 +133,48 @@ class VocabularyEntry:
     examples: list[str]
     notes: str | None
     tags: list[str]
+    # Legacy source_* fields remain the initial/primary mirror; occurrences are canonical after v10.
     source_paper_id: str | None
     source_session_id: str | None
     source_page_number: int | None
     source_selection: dict[str, Any] | None
     created_at: str
     updated_at: str
+    # V1 storage fields; public_dict intentionally preserves the pre-v10 API shape.
+    lemma: str | None = None
+    entry_type: str = "word"
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "vocabulary_id": self.vocabulary_id,
+            "term": self.term,
+            "normalized_term": self.normalized_term,
+            "definition": self.definition,
+            "part_of_speech": self.part_of_speech,
+            "pronunciation": self.pronunciation,
+            "examples": self.examples,
+            "notes": self.notes,
+            "tags": self.tags,
+            "source_paper_id": self.source_paper_id,
+            "source_session_id": self.source_session_id,
+            "source_page_number": self.source_page_number,
+            "source_selection": self.source_selection,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+
+@dataclass(frozen=True)
+class VocabularyOccurrence:
+    occurrence_id: str
+    vocabulary_id: str
+    surface_form: str
+    paper_id: str | None
+    session_id: str | None
+    page_number: int | None
+    context_excerpt: str | None
+    selection_json: str | None
+    created_at: str
 
     def public_dict(self) -> dict[str, Any]:
         return asdict(self)

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import sqlite3
+from uuid import NAMESPACE_URL, uuid5
 
 
 MIGRATIONS: tuple[tuple[int, str], ...] = (
@@ -253,7 +255,117 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
             ON summary_notes(paper_id, page_number, normalized_y, created_at, summary_note_id);
         """,
     ),
+    (
+        10,
+        """
+        ALTER TABLE vocabulary_entries ADD COLUMN lemma TEXT
+            CHECK (lemma IS NULL OR length(trim(lemma)) BETWEEN 1 AND 200);
+        ALTER TABLE vocabulary_entries ADD COLUMN entry_type TEXT NOT NULL DEFAULT 'word'
+            CHECK (entry_type IN ('word','phrase'));
+
+        CREATE TABLE vocabulary_occurrences (
+            occurrence_id TEXT PRIMARY KEY,
+            vocabulary_id TEXT NOT NULL REFERENCES vocabulary_entries(vocabulary_id) ON DELETE CASCADE,
+            surface_form TEXT NOT NULL CHECK (length(trim(surface_form)) >= 1),
+            paper_id TEXT REFERENCES papers(paper_id) ON DELETE SET NULL,
+            session_id TEXT REFERENCES reading_sessions(session_id) ON DELETE SET NULL,
+            page_number INTEGER CHECK (page_number IS NULL OR page_number >= 1),
+            context_excerpt TEXT,
+            selection_json TEXT,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX idx_vocabulary_occurrences_entry
+            ON vocabulary_occurrences(vocabulary_id, created_at, occurrence_id);
+        CREATE INDEX idx_vocabulary_occurrences_surface
+            ON vocabulary_occurrences(surface_form COLLATE NOCASE);
+        CREATE INDEX idx_vocabulary_occurrences_paper_page
+            ON vocabulary_occurrences(paper_id, page_number, created_at);
+
+        CREATE TABLE vocabulary_occurrence_events (
+            idempotency_key TEXT PRIMARY KEY,
+            payload_sha256 TEXT NOT NULL,
+            response_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        """,
+    ),
 )
+
+
+def _entry_type_for_term(term: str) -> str:
+    return "phrase" if any(character.isspace() for character in term.strip()) else "word"
+
+
+def _safe_selection_metadata(raw_selection: str | None) -> tuple[str, str | None, str | None]:
+    """Return surface/context while preserving raw selection JSON in storage."""
+    if not raw_selection:
+        return "", None, None
+    try:
+        selection = json.loads(raw_selection)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return "", None, raw_selection
+    if not isinstance(selection, dict):
+        return "", None, raw_selection
+    exact_text = selection.get("exact_text")
+    if not isinstance(exact_text, str) or not exact_text.strip():
+        return "", None, raw_selection
+    prefix = selection.get("prefix", "")
+    suffix = selection.get("suffix", "")
+    prefix = prefix if isinstance(prefix, str) else ""
+    suffix = suffix if isinstance(suffix, str) else ""
+    context = f"{prefix}{exact_text}{suffix}" or None
+    return exact_text, context, raw_selection
+
+
+def _backfill_vocabulary_occurrences(connection: sqlite3.Connection) -> None:
+    """Add one initial occurrence for each legacy entry that has source data."""
+    rows = connection.execute(
+        """
+        SELECT vocabulary_id, term, source_paper_id, source_session_id,
+               source_page_number, source_selection_json
+        FROM vocabulary_entries
+        """
+    ).fetchall()
+    for row in rows:
+        connection.execute(
+            "UPDATE vocabulary_entries SET entry_type=? WHERE vocabulary_id=?",
+            (_entry_type_for_term(row[1]), row[0]),
+        )
+        has_source = any(
+            value is not None for value in row[2:6]
+        )
+        if not has_source:
+            continue
+        surface_form, context_excerpt, selection_json = _safe_selection_metadata(row[5])
+        surface_form = surface_form or row[1]
+        occurrence_id = str(
+            uuid5(NAMESPACE_URL, f"caeliae-read:vocabulary-occurrence:{row[0]}")
+        )
+        connection.execute(
+            """
+            INSERT INTO vocabulary_occurrences(
+                occurrence_id, vocabulary_id, surface_form, paper_id, session_id,
+                page_number, context_excerpt, selection_json, created_at
+            )
+            SELECT ?, ?, ?, ?, ?, ?, ?, ?, created_at
+            FROM vocabulary_entries
+            WHERE vocabulary_id = ?
+            """,
+            (
+                occurrence_id,
+                row[0],
+                surface_form,
+                row[2],
+                row[3],
+                row[4],
+                context_excerpt,
+                selection_json,
+                row[0],
+            ),
+        )
+
+
+MIGRATION_HOOKS = {10: _backfill_vocabulary_occurrences}
 
 
 def migrate(connection: sqlite3.Connection) -> None:
@@ -266,9 +378,16 @@ def migrate(connection: sqlite3.Connection) -> None:
     for version, sql in MIGRATIONS:
         if version in applied:
             continue
-        connection.executescript(sql)
-        connection.execute(
-            "INSERT INTO schema_migrations(version, applied_at) VALUES (?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
-            (version,),
-        )
-    connection.commit()
+        try:
+            connection.executescript(f"BEGIN;\n{sql}\n")
+            hook = MIGRATION_HOOKS.get(version)
+            if hook:
+                hook(connection)
+            connection.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+                (version,),
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
