@@ -216,7 +216,19 @@ h1 { margin: 0; font-family: Georgia, "Times New Roman", serif; font-size: clamp
 .selection-composer-actions button { min-height: 34px; padding: 0 12px; border: 1px solid rgba(63,57,48,.2); border-radius: 8px; background: #fffdf8; color: #302d28; cursor: pointer; }
 .selection-composer-actions button:first-child { border-color: #302d28; background: #302d28; color: #fffdf8; }
 .selection-composer-actions .selection-vocabulary-action { border-color: rgba(77,104,123,.4); color: #3e6074; }
+.selection-composer-actions .selection-vocabulary-action.secondary { background: #f4f8fa; border-color: rgba(77,104,123,.3); color: #3e6074; }
 .selection-composer-actions button:disabled { cursor: default; opacity: .45; }
+.selection-attach-panel { display: grid; gap: 8px; padding: 10px; border: 1px solid rgba(77,104,123,.22); border-radius: 10px; background: rgba(244,248,250,.82); }
+.selection-attach-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #3e6074; font-size: 13px; }
+.selection-attach-close { width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: #587486; cursor: pointer; font-size: 18px; line-height: 1; }
+.selection-attach-close:hover { background: rgba(77,104,123,.12); }
+.selection-attach-panel > input { width: 100%; min-height: 34px; box-sizing: border-box; padding: 7px 9px; border: 1px solid rgba(77,104,123,.24); border-radius: 7px; background: #fffdf8; color: #302d28; font: inherit; }
+.selection-attach-panel > input:focus { border-color: #587486; box-shadow: 0 0 0 3px rgba(77,104,123,.12); outline: none; }
+.selection-attach-list { display: grid; gap: 5px; max-height: 190px; overflow-y: auto; }
+.selection-attach-option { display: grid; gap: 2px; min-width: 0; padding: 8px 9px; border: 1px solid rgba(77,104,123,.16); border-radius: 7px; background: rgba(255,253,248,.84); color: #302d28; cursor: pointer; text-align: left; }
+.selection-attach-option:hover, .selection-attach-option:focus-visible { border-color: rgba(77,104,123,.48); background: #fffdf8; outline: none; }
+.selection-attach-option strong { overflow: hidden; color: #3e6074; text-overflow: ellipsis; white-space: nowrap; }
+.selection-attach-option span, .selection-attach-option small, .selection-attach-status { overflow-wrap: anywhere; color: #746d62; font-size: 11px; line-height: 1.35; }
 .sticky-composer { position: absolute; right: 16px; bottom: calc(var(--status-h) + 16px); z-index: 7; width: clamp(260px, 28cqw, 360px); max-width: calc(100cqw - 32px); min-width: 0; max-height: 76vh; overflow: auto; box-sizing: border-box; display: grid; gap: 9px; padding: 14px; border: 1px solid rgba(63,57,48,.2); border-radius: 14px; background: rgba(255,253,248,.97); box-shadow: 0 14px 34px rgba(39,35,29,.2); font-size: 16px; line-height: 1.55; }
 .summary-note-composer { position: absolute; right: 16px; bottom: calc(var(--status-h) + 16px); z-index: 7; width: clamp(280px, 30cqw, 380px); max-width: calc(100cqw - 32px); min-width: 0; max-height: 76vh; overflow: auto; box-sizing: border-box; display: grid; gap: 9px; padding: 14px; border: 1px solid rgba(79,102,97,.3); border-radius: 14px; background: rgba(255,253,248,.97); box-shadow: 0 14px 34px rgba(39,35,29,.2); font-size: 16px; line-height: 1.55; }
 .summary-note-composer textarea { width: 100%; min-height: 126px; max-height: none; overflow-y: hidden; box-sizing: border-box; resize: none; padding: 9px 10px; border: 1px solid rgba(79,102,97,.28); border-radius: 9px; background: #fffdf8; color: #302d28; font: inherit; font-size: 16px; line-height: 1.55; }

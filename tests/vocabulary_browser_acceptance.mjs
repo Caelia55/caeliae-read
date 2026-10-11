@@ -5,6 +5,7 @@ const baseURL = requireAcceptanceBaseURL();
 const browserPath = process.env.CAELIAE_READ_BROWSER_PATH
   ?? "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe";
 const term = `phase2-browser-${Date.now()}`;
+const lemma = `canonical-${term}`;
 
 const browser = await chromium.launch({ headless: true, executablePath: browserPath });
 try {
@@ -15,7 +16,15 @@ try {
   await page.getByRole("button", { name: "保存词汇" }).click();
   await page.locator(".entry-row").filter({ hasText: term }).waitFor();
 
-  const search = page.getByPlaceholder("搜索词条、释义或标签");
+  await page.getByRole("button", { name: new RegExp(`打开 ${term} 操作`) }).click();
+  await page.getByRole("button", { name: "编辑" }).click();
+  await page.getByLabel("Lemma / canonical form").fill(lemma);
+  await page.getByLabel("词性").fill("noun");
+  await page.getByRole("button", { name: "保存修改" }).click();
+  await page.locator(".entry-term", { hasText: lemma }).waitFor();
+  if (!(await page.locator(".entry-original").filter({ hasText: term }).count())) throw new Error("original term is not visible beside canonical title");
+
+  const search = page.getByPlaceholder("搜索词条、lemma、释义或标签");
   await search.fill(term);
   await page.locator(".entry-row").filter({ hasText: term }).waitFor();
   const jsonExport = await page.request.get(`${baseURL}/api/vocabulary/export?format=json&search=${encodeURIComponent(term)}`);
@@ -25,12 +34,13 @@ try {
 
   await page.getByRole("button", { name: "开始复习" }).click();
   await page.getByRole("dialog", { name: "开始复习" }).getByRole("button", { name: "开始" }).click();
+  await page.getByRole("heading", { name: lemma }).waitFor();
   await page.getByRole("button", { name: "显示答案" }).click();
   await page.getByRole("button", { name: "会", exact: true }).click();
   await page.getByRole("button", { name: /查看结果|下一个/ }).click();
   await page.getByRole("button", { name: /回到词汇/ }).first().click();
 
-  await page.getByRole("button", { name: new RegExp(`打开 ${term} 操作`) }).click();
+  await page.getByRole("button", { name: new RegExp(`打开 ${lemma} 操作`) }).click();
   page.once("dialog", (dialog) => void dialog.accept());
   await page.getByRole("button", { name: "删除" }).click();
   await page.locator(".entry-row").filter({ hasText: term }).waitFor({ state: "detached" });

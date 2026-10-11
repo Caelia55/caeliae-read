@@ -40,6 +40,7 @@ import {
 } from "./api";
 import { openReadingTask as openReadingTaskApi, type ReadingTaskDetail } from "./readingApi";
 import { ReadingTaskPanel } from "./ReadingTaskPanel";
+import { listVocabulary as listVocabularyEntries, type VocabularyEntry as VocabularyListEntry } from "./vocabularyApi";
 
 GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -522,6 +523,10 @@ export function App() {
   const [selectionComposerNote, setSelectionComposerNote] = useState("");
   const [selectionVocabularyKey, setSelectionVocabularyKey] = useState("");
   const [vocabularySaving, setVocabularySaving] = useState(false);
+  const [selectionAttachOpen, setSelectionAttachOpen] = useState(false);
+  const [selectionAttachSearch, setSelectionAttachSearch] = useState("");
+  const [selectionAttachEntries, setSelectionAttachEntries] = useState<VocabularyListEntry[]>([]);
+  const [selectionAttachLoading, setSelectionAttachLoading] = useState(false);
   const [selectionComposerStyle, setSelectionComposerStyle] = useState<UserAnnotationStyle>(() => {
     try {
       const stored = localStorage.getItem(LAST_USER_ANNOTATION_STYLE);
@@ -568,6 +573,7 @@ export function App() {
   const viewportOriginalRef = useRef({ width: 1, height: 1, rotation: 0 as 0 | 90 | 180 | 270 });
   const pageTextRef = useRef("");
   const revisionRef = useRef(0);
+  const selectionVocabularyRevisionRef = useRef(1);
   const saveTimerRef = useRef<number | null>(null);
   const writeChainRef = useRef<Promise<void>>(Promise.resolve());
   const drawerOpenRef = useRef(false);
@@ -1707,6 +1713,9 @@ export function App() {
     setSelectionComposerDraft(null);
     setSelectionComposerNote("");
     setSelectionVocabularyKey("");
+    setSelectionAttachOpen(false);
+    setSelectionAttachSearch("");
+    setSelectionAttachEntries([]);
   }, []);
 
   const discardSelectionComposer = useCallback(() => {
@@ -1736,7 +1745,7 @@ export function App() {
     try {
       const result = await createVocabularyFromSelection({
         term,
-        selection: { ...draft, revision: Math.max(1, revisionRef.current + 1) },
+        selection: { ...draft, revision: selectionVocabularyRevisionRef.current },
         idempotency_key: selectionVocabularyKey || crypto.randomUUID(),
       });
       setMessage(result.replayed ? "该选区已在词汇中" : "已加入词汇");
@@ -1746,6 +1755,48 @@ export function App() {
       setVocabularySaving(false);
     }
   }, [selectionComposerDraft, selectionVocabularyKey, vocabularySaving]);
+
+  const openSelectionAttach = useCallback(() => {
+    setSelectionAttachSearch(selectionComposerDraft?.exact_text ?? "");
+    setSelectionAttachEntries([]);
+    setSelectionAttachOpen(true);
+  }, [selectionComposerDraft]);
+
+  const attachSelectionToVocabulary = useCallback(async (entry: VocabularyListEntry) => {
+    const draft = selectionComposerDraft;
+    const term = draft?.exact_text.trim();
+    if (!draft || !term || vocabularySaving) return;
+    setVocabularySaving(true);
+    try {
+      const result = await createVocabularyFromSelection({
+        term,
+        vocabulary_id: entry.vocabulary_id,
+        selection: { ...draft, revision: selectionVocabularyRevisionRef.current },
+        idempotency_key: crypto.randomUUID(),
+      });
+      const title = entry.lemma?.trim() || entry.term;
+      setMessage(result.replayed ? `该选区已添加到 ${title}` : `已添加到 ${title}`);
+      setSelectionAttachOpen(false);
+    } catch (error) {
+      setMessage(error instanceof Error ? `加入已有词条失败：${error.message}` : "加入已有词条失败");
+    } finally {
+      setVocabularySaving(false);
+    }
+  }, [selectionComposerDraft, vocabularySaving]);
+
+  useEffect(() => {
+    if (!selectionAttachOpen) return;
+    let cancelled = false;
+    setSelectionAttachLoading(true);
+    void listVocabularyEntries(selectionAttachSearch.trim()).then((items) => {
+      if (!cancelled) setSelectionAttachEntries(items);
+    }).catch(() => {
+      if (!cancelled) setSelectionAttachEntries([]);
+    }).finally(() => {
+      if (!cancelled) setSelectionAttachLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [selectionAttachOpen, selectionAttachSearch]);
 
   const closeStickyComposer = useCallback(() => {
     setStickyComposerDraft(null);
@@ -1896,6 +1947,11 @@ export function App() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && selectionAttachOpen) {
+        event.preventDefault();
+        setSelectionAttachOpen(false);
+        return;
+      }
       if (event.key === "Escape" && selectionComposerOpenRef.current) discardSelectionComposer();
       if (event.key === "Escape") {
         if (summaryPlacementMode) setMessage("大意放置已取消");
@@ -1910,7 +1966,7 @@ export function App() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [closeStickyComposer, closeSummaryComposer, discardSelectionComposer, summaryComposerDraft, summaryPlacementMode, stickyComposerDraft, stickyPlacementMode]);
+  }, [closeStickyComposer, closeSummaryComposer, discardSelectionComposer, selectionAttachOpen, summaryComposerDraft, summaryPlacementMode, stickyComposerDraft, stickyPlacementMode]);
 
   const captureSelection = useCallback(() => {
     const selection = document.getSelection();
@@ -1958,6 +2014,7 @@ export function App() {
     setSelectionComposerDraft(frozenDraft);
     setSelectionComposerNote("");
     setSelectionVocabularyKey(crypto.randomUUID());
+    selectionVocabularyRevisionRef.current = Math.max(1, revisionRef.current + 1);
   }, [activeAnnotationId, annotationEditNote, annotations, pageNumber, paper, scheduleState, sessionId, updateAnnotationCardOpen]);
 
   async function openPaper(nextPaper: Paper) {
@@ -2115,8 +2172,24 @@ export function App() {
               <button type="button" disabled={!selectionComposerNote.trim()} onClick={() => void saveSelectionComposerNote()}>保存笔记</button>
               <button type="button" onClick={discardSelectionComposer}>仅保存选区</button>
               <button type="button" className="selection-vocabulary-action" disabled={vocabularySaving} data-testid="selection-add-vocabulary" onClick={() => void addSelectionToVocabulary()}>{vocabularySaving ? "加入中…" : "加入词汇"}</button>
+              <button type="button" className="selection-vocabulary-action secondary" disabled={vocabularySaving} data-testid="selection-attach-vocabulary" aria-expanded={selectionAttachOpen} onClick={openSelectionAttach}>加入已有词条</button>
               <button type="button" onClick={() => resetOverlaySize("composer")}>恢复默认大小</button>
             </div>
+            {selectionAttachOpen && <div className="selection-attach-panel" role="dialog" aria-label="选择已有词条">
+              <div className="selection-attach-heading"><strong>选择要挂载的词条</strong><button type="button" className="selection-attach-close" aria-label="关闭已有词条选择" onClick={() => setSelectionAttachOpen(false)}>×</button></div>
+              <input autoFocus aria-label="搜索已有词条" placeholder="搜索词条、lemma、释义或标签" value={selectionAttachSearch} onChange={(event) => setSelectionAttachSearch(event.target.value)} />
+              <div className="selection-attach-list" aria-live="polite">
+                {selectionAttachLoading && <span className="selection-attach-status">搜索中…</span>}
+                {!selectionAttachLoading && !selectionAttachEntries.length && <span className="selection-attach-status">没有匹配的已有词条</span>}
+                {!selectionAttachLoading && selectionAttachEntries.map((entry) => {
+                  const title = entry.lemma?.trim() || entry.term;
+                  return <button type="button" className="selection-attach-option" key={entry.vocabulary_id} data-vocabulary-id={entry.vocabulary_id} disabled={vocabularySaving} onClick={() => void attachSelectionToVocabulary(entry)}>
+                    <span><strong>{title}</strong>{entry.lemma && entry.lemma !== entry.term && <small>original: {entry.term}</small>}</span>
+                    <small>{[entry.part_of_speech, entry.definition || "未添加释义", `${entry.occurrence_count} 次出现`].filter(Boolean).join(" · ")}</small>
+                  </button>;
+                })}
+              </div>
+            </div>}
             {renderOverlayResizeHandle("composer")}
           </aside>}
            {stickyComposerDraft && <aside ref={stickyComposerRef} className={`sticky-composer${overlayDragging === "sticky" ? " is-overlay-dragging" : ""}${overlayResizing === "sticky" ? " is-overlay-resizing" : ""}`} aria-label={stickyComposerDraft.id ? "编辑便签" : "添加便签"} style={{ ...(overlayPosition ? { left: overlayPosition.left, top: overlayPosition.top, right: "auto", bottom: "auto" } : {}), ...overlaySizeStyle("sticky") }} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>

@@ -45,7 +45,9 @@ try {
 
   async function addSelected(value) {
     const expectedTerm = await selectTarget(value);
+    const createResponsePromise = page.waitForResponse((response) => response.url().endsWith("/api/vocabulary/from-selection") && response.request().method() === "POST");
     await page.getByTestId("selection-add-vocabulary").click();
+    const createBody = await (await createResponsePromise).json();
     await page.getByText("已加入词汇").waitFor();
     const sessionId = await page.evaluate(() => localStorage.getItem("caeliae.read.activeSessionId"));
     let context;
@@ -58,18 +60,56 @@ try {
     const term = context.selection.exact_text;
     const entries = await (await page.request.get(`${baseURL}/api/vocabulary`)).json();
     if (!entries.entries.some((entry) => entry.term === term)) throw new Error(`vocabulary entry missing: ${term}`);
-    return { term, context };
+    const entry = createBody.entry;
+    if (!entry) throw new Error(`vocabulary entry missing after creation: ${term}`);
+    return { term, context, entry };
   }
 
   const word = await addSelected("word");
   await page.getByRole("button", { name: "仅保存选区" }).click();
   await page.evaluate(() => document.getSelection()?.removeAllRanges());
+  const attachedTerm = await selectTarget("word");
+  const attachDialog = page.getByRole("dialog", { name: "选择已有词条" });
+  await page.getByTestId("selection-attach-vocabulary").click();
+  await attachDialog.waitFor();
+  await page.keyboard.press("Escape");
+  await attachDialog.waitFor({ state: "detached" });
+  await page.getByTestId("selection-attach-vocabulary").click();
+  await attachDialog.waitFor();
+  const attachOption = attachDialog.locator(`[data-vocabulary-id="${word.entry.vocabulary_id}"]`);
+  await attachOption.focus();
+  await attachOption.press("Enter");
+  await page.getByText(`已添加到 ${word.term}`).waitFor();
+  if (attachedTerm !== word.term) throw new Error(`attached surface mismatch: ${attachedTerm} !== ${word.term}`);
+  const attachedDetail = await (await page.request.get(`${baseURL}/api/vocabulary/${word.entry.vocabulary_id}`)).json();
+  if (attachedDetail.entry.occurrence_count !== 2 || attachedDetail.occurrences.length !== 2) throw new Error("explicit vocabulary attach did not append an occurrence");
+  const variantSelection = { ...word.context.selection, exact_text: "traces" };
+  const variantResponse = await page.request.post(`${baseURL}/api/vocabulary/${word.entry.vocabulary_id}/occurrences`, { data: { selection: variantSelection, idempotency_key: crypto.randomUUID() } });
+  if (!variantResponse.ok()) throw new Error(`variant occurrence append failed: ${await variantResponse.text()}`);
+  const variantDetail = await (await page.request.get(`${baseURL}/api/vocabulary/${word.entry.vocabulary_id}`)).json();
+  if (variantDetail.entry.occurrence_count !== 3 || !variantDetail.occurrences.some((occurrence) => occurrence.surface_form === "traces")) throw new Error("multiple surface forms were not persisted");
+  await page.getByRole("button", { name: "仅保存选区" }).click();
+  await page.evaluate(() => document.getSelection()?.removeAllRanges());
   const phrase = await addSelected("phrase");
+  const replayResponsePromise = page.waitForResponse((response) => response.url().endsWith("/api/vocabulary/from-selection") && response.request().method() === "POST");
   await page.getByTestId("selection-add-vocabulary").click();
+  const replayResponse = await replayResponsePromise;
+  const replayBody = await replayResponse.json();
   await page.getByText("该选区已在词汇中").waitFor();
+  const replayMessage = await page.locator(".reader-status > span").first().innerText();
+  if (!replayBody.replayed) throw new Error(`duplicate response was not replayed: ${JSON.stringify(replayBody)}`);
+  if (!replayMessage.includes("已在词汇中") && !replayMessage.includes("已加入词汇")) throw new Error(`unexpected duplicate message: ${replayMessage}`);
+  const replayDetail = await (await page.request.get(`${baseURL}/api/vocabulary/${phrase.entry.vocabulary_id}`)).json();
+  if (replayDetail.entry.occurrence_count !== 1) throw new Error("duplicate replay created an extra occurrence");
 
   await page.getByRole("button", { name: "词汇", exact: true }).click();
   await page.waitForURL("**/reader/vocabulary.html");
+  const wordEntry = page.locator(".entry-main").filter({ hasText: word.term }).first();
+  await wordEntry.click();
+  const wordDetails = page.locator(".entry-details").filter({ hasText: "traces" }).first();
+  await wordDetails.waitFor();
+  const wordDetailText = await wordDetails.innerText();
+  if (!wordDetailText.includes(word.term) || !wordDetailText.includes("traces") || !wordDetailText.includes("第 2 页")) throw new Error(`multiple surface occurrence details missing: ${wordDetailText}`);
   const entry = page.locator(".entry-main").filter({ hasText: phrase.term }).first();
   await entry.click();
   const details = page.locator(".entry-details").filter({ hasText: phrase.term }).first();
@@ -84,6 +124,7 @@ try {
     source_title: "selectable-paper.pdf",
     source_page: phrase.context.selection.page_number,
     duplicate_replayed: true,
+    replay_message: replayMessage,
     source_details_visible: true,
   }, null, 2));
 } finally {
