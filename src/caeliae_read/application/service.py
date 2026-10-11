@@ -15,6 +15,7 @@ from pypdf import PdfReader
 
 from caeliae_read.config import Settings, get_settings
 from caeliae_read.domain.models import Annotation, Checkpoint, Paper, ReadingContext, Selection
+from caeliae_read.storage.migrations import derive_entry_type, derive_selection_occurrence
 from caeliae_read.storage.repository import (
     CaeliaeReadRepository,
     IdempotencyConflictError,
@@ -41,6 +42,10 @@ class PaperNotFoundError(CaeliaeReadError):
 
 class SessionNotFoundError(CaeliaeReadError):
     code = "session_not_found"
+
+
+class VocabularyNotFoundError(CaeliaeReadError):
+    code = "vocabulary_not_found"
 
 
 class EventConflictError(CaeliaeReadError):
@@ -297,7 +302,10 @@ class CaeliaeReadService:
         return context.checkpoint if context else None
 
     @staticmethod
-    def _vocabulary_values(payload: dict[str, object], selection: dict[str, object] | None = None) -> dict[str, object]:
+    def _vocabulary_values(
+        payload: dict[str, object], selection: dict[str, object] | None = None,
+        *, infer_entry_type: bool = True, existing_entry_type: str | None = None,
+    ) -> dict[str, object]:
         term = unicodedata.normalize("NFC", str(payload.get("term", "")).strip())
         if not term or len(term) > 200:
             raise ValidationError("term must contain 1 to 200 characters")
@@ -307,6 +315,18 @@ class CaeliaeReadService:
             raise ValidationError("examples must be a list of at most 20 strings")
         if not isinstance(tags, list) or len(tags) > 20 or any(not isinstance(item, str) for item in tags):
             raise ValidationError("tags must be a list of at most 20 strings")
+        lemma = None if payload.get("lemma") is None else unicodedata.normalize("NFC", str(payload["lemma"]).strip()) or None
+        if lemma and len(lemma) > 200:
+            raise ValidationError("lemma must contain at most 200 characters")
+        entry_type = payload.get("entry_type")
+        if entry_type is None:
+            if infer_entry_type:
+                selected_text = str(selection.get("exact_text", "")) if selection else ""
+                entry_type = "phrase" if derive_entry_type(term) == "phrase" or derive_entry_type(selected_text) == "phrase" else "word"
+            else:
+                entry_type = existing_entry_type or "word"
+        if entry_type not in {"word", "phrase"}:
+            raise ValidationError("entry_type must be word or phrase")
         source_paper_id = payload.get("source_paper_id")
         source_session_id = payload.get("source_session_id")
         source_page_number = payload.get("source_page_number")
@@ -326,6 +346,7 @@ class CaeliaeReadService:
                 raise ValidationError("source_page_number must be at least 1")
         return {
             "term": term, "normalized_term": term.casefold(),
+            "lemma": lemma, "entry_type": entry_type,
             "definition": None if payload.get("definition") is None else str(payload["definition"]).strip() or None,
             "part_of_speech": None if payload.get("part_of_speech") is None else str(payload["part_of_speech"]).strip() or None,
             "pronunciation": None if payload.get("pronunciation") is None else str(payload["pronunciation"]).strip() or None,
@@ -338,6 +359,20 @@ class CaeliaeReadService:
 
     def _vocabulary_public_dict(self, entry: dict[str, object] | object) -> dict[str, object]:
         values = entry.public_dict() if hasattr(entry, "public_dict") else dict(entry)  # type: ignore[arg-type]
+        vocabulary_id = values.get("vocabulary_id")
+        current = self.repository.get_vocabulary(str(vocabulary_id)) if vocabulary_id else None
+        if current is not None:
+            values.setdefault("lemma", current.lemma)
+            values.setdefault("entry_type", current.entry_type)
+            values.setdefault("source_selection", current.source_selection)
+            values.setdefault("source_paper_id", current.source_paper_id)
+            values.setdefault("source_session_id", current.source_session_id)
+            values.setdefault("source_page_number", current.source_page_number)
+            values.setdefault("created_at", current.created_at)
+            values.setdefault("updated_at", current.updated_at)
+        values.setdefault("lemma", getattr(entry, "lemma", None))
+        values.setdefault("entry_type", getattr(entry, "entry_type", "word"))
+        values["occurrence_count"] = self.repository.count_vocabulary_occurrences(str(vocabulary_id)) if vocabulary_id else 0
         source_paper_id = values.get("source_paper_id")
         if source_paper_id:
             try:
@@ -348,11 +383,96 @@ class CaeliaeReadService:
             values["source_paper_title"] = None
         return values
 
+    def _vocabulary_occurrence_public_dict(self, occurrence: object) -> dict[str, object]:
+        values = occurrence.public_dict() if hasattr(occurrence, "public_dict") else dict(occurrence)  # type: ignore[arg-type]
+        selection = None
+        raw_selection = values.pop("selection_json", None)
+        if raw_selection:
+            try:
+                parsed = json.loads(str(raw_selection))
+                selection = parsed if isinstance(parsed, dict) else None
+            except (TypeError, ValueError, json.JSONDecodeError):
+                selection = None
+        values["selection"] = selection
+        paper_id = values.get("paper_id")
+        if paper_id:
+            try:
+                values["paper_title"] = self.repository.get_paper(str(paper_id))[0].original_filename
+            except NotFoundError:
+                values["paper_title"] = None
+        else:
+            values["paper_title"] = None
+        return values
+
+    def _validate_selection_source(self, selection: dict[str, object]) -> dict[str, object]:
+        paper_id = require_uuid(str(selection.get("paper_id")), "selection.paper_id")
+        session_id = require_uuid(str(selection.get("session_id")), "selection.session_id")
+        try:
+            if self.repository.get_session_paper_id(session_id) != paper_id:
+                raise ValidationError("selection session does not belong to paper")
+        except NotFoundError as error:
+            raise SessionNotFoundError("selection session not found") from error
+        page_number = int(selection.get("page_number", 0))
+        if page_number < 1:
+            raise ValidationError("selection page_number must be at least 1")
+        return {**selection, "paper_id": paper_id, "session_id": session_id, "page_number": page_number}
+
+    def _selection_occurrence(self, vocabulary_id: str, selection: dict[str, object], now: str) -> dict[str, object]:
+        selection = self._validate_selection_source(selection)
+        surface_form, context_excerpt, selection_json = derive_selection_occurrence(selection)
+        if not surface_form:
+            raise ValidationError("selection.exact_text must not be blank")
+        return {
+            "occurrence_id": str(uuid4()), "vocabulary_id": vocabulary_id,
+            "surface_form": surface_form, "paper_id": selection["paper_id"],
+            "session_id": selection["session_id"], "page_number": selection["page_number"],
+            "context_excerpt": context_excerpt, "selection_json": selection_json,
+            "created_at": now,
+        }
+
     def list_vocabulary(self, search: str | None = None, paper_id: str | None = None) -> list[dict[str, object]]:
         target = require_uuid(paper_id, "paper_id") if paper_id else None
         return [self._vocabulary_public_dict(entry) for entry in self.repository.list_vocabulary(search=search, paper_id=target)]
 
-    def create_vocabulary(self, payload: dict[str, object], selection: dict[str, object] | None = None) -> dict[str, object]:
+    def create_vocabulary(
+        self, payload: dict[str, object], selection: dict[str, object] | None = None,
+        existing_vocabulary_id: str | None = None,
+    ) -> dict[str, object]:
+        if existing_vocabulary_id is not None:
+            target = require_uuid(existing_vocabulary_id, "vocabulary_id")
+            existing = self.repository.get_vocabulary(target)
+            if existing is None:
+                raise VocabularyNotFoundError("vocabulary entry not found")
+            if selection is None:
+                raise ValidationError("selection is required when attaching an occurrence")
+            now = utc_now()
+            occurrence = self._selection_occurrence(target, selection, now)
+            canonical = json.dumps({k: v for k, v in payload.items() if k != "idempotency_key"} | {"selection": selection, "vocabulary_id": target}, sort_keys=True, separators=(",", ":"), default=str)
+            paper_title = None
+            try:
+                paper_title = self.repository.get_paper(str(occurrence["paper_id"]))[0].original_filename
+            except NotFoundError:
+                pass
+            response = {
+                "entry": self._vocabulary_public_dict(existing) | {"occurrence_count": self.repository.count_vocabulary_occurrences(target) + 1},
+                "created": False, "replayed": False,
+                "occurrence": self._vocabulary_occurrence_public_dict({**occurrence, "paper_title": paper_title}),
+                "occurrence_created": True, "attached": True,
+            }
+            try:
+                result, replayed = self.repository.append_vocabulary_occurrence(
+                    occurrence=occurrence, idempotency_key=str(payload.get("idempotency_key", "")),
+                    payload_sha256=hashlib.sha256(canonical.encode()).hexdigest(),
+                    response_json=json.dumps(response, ensure_ascii=False, separators=(",", ":")), created_at=now,
+                )
+            except IdempotencyConflictError as error:
+                raise EventConflictError(str(error)) from error
+            result["entry"] = self._vocabulary_public_dict(result["entry"])
+            result["replayed"] = replayed
+            result["occurrence_created"] = not replayed
+            result["attached"] = True
+            return result
+
         values = self._vocabulary_values(payload, selection)
         if values["source_session_id"]:
             try:
@@ -362,10 +482,26 @@ class CaeliaeReadService:
                 raise SessionNotFoundError("source session not found") from error
         key = str(payload.get("idempotency_key", ""))
         entry = {"vocabulary_id": str(uuid4()), **values}
-        canonical = json.dumps({k: v for k, v in payload.items() if k != "idempotency_key"}, sort_keys=True, separators=(",", ":"), default=str)
-        response = {"entry": self._vocabulary_public_dict(entry), "created": True, "replayed": False}
+        canonical_payload = {k: v for k, v in payload.items() if k != "idempotency_key"}
+        if selection is not None:
+            canonical_payload["selection"] = selection
+        canonical = json.dumps(canonical_payload, sort_keys=True, separators=(",", ":"), default=str)
+        if selection is not None:
+            now = utc_now()
+            occurrence = self._selection_occurrence(str(entry["vocabulary_id"]), selection, now)
+            response = {
+                "entry": self._vocabulary_public_dict(entry) | {"occurrence_count": 1}, "created": True, "replayed": False,
+                "occurrence": self._vocabulary_occurrence_public_dict(occurrence), "occurrence_created": True, "attached": False,
+            }
+            save_method = self.repository.save_vocabulary_with_occurrence
+            save_kwargs = {"entry": entry, "occurrence": occurrence}
+        else:
+            now = utc_now()
+            response = {"entry": self._vocabulary_public_dict(entry), "created": True, "replayed": False, "occurrence": None, "occurrence_created": False, "attached": False}
+            save_method = self.repository.save_vocabulary
+            save_kwargs = {"entry": entry}
         try:
-            result, replayed = self.repository.save_vocabulary(entry=entry, idempotency_key=key, payload_sha256=hashlib.sha256(canonical.encode()).hexdigest(), response_json=json.dumps(response, ensure_ascii=False, separators=(",", ":")), created_at=utc_now())
+            result, replayed = save_method(**save_kwargs, idempotency_key=key, payload_sha256=hashlib.sha256(canonical.encode()).hexdigest(), response_json=json.dumps(response, ensure_ascii=False, separators=(",", ":")), created_at=now)
         except IdempotencyConflictError as error:
             raise EventConflictError(str(error)) from error
         result["entry"] = self._vocabulary_public_dict(result["entry"])
@@ -375,10 +511,27 @@ class CaeliaeReadService:
     def update_vocabulary(self, vocabulary_id: str, payload: dict[str, object]) -> dict[str, object]:
         target = require_uuid(vocabulary_id, "vocabulary_id")
         try:
-            updated = self.repository.update_vocabulary(target, self._vocabulary_values(payload), utc_now())
+            current = self.repository.get_vocabulary(target)
+            if current is None:
+                raise NotFoundError("vocabulary entry not found")
+            updated = self.repository.update_vocabulary(
+                target,
+                self._vocabulary_values(payload, infer_entry_type=False, existing_entry_type=current.entry_type),
+                utc_now(),
+            )
         except NotFoundError as error:
             raise ValidationError(str(error)) from error
-        return {"entry": updated.public_dict()}
+        return {"entry": self._vocabulary_public_dict(updated)}
+
+    def get_vocabulary_detail(self, vocabulary_id: str) -> dict[str, object]:
+        target = require_uuid(vocabulary_id, "vocabulary_id")
+        entry = self.repository.get_vocabulary(target)
+        if entry is None:
+            raise VocabularyNotFoundError("vocabulary entry not found")
+        return {"entry": self._vocabulary_public_dict(entry), "occurrences": [self._vocabulary_occurrence_public_dict(item) for item in self.repository.list_vocabulary_occurrences(target)]}
+
+    def append_vocabulary_occurrence(self, vocabulary_id: str, payload: dict[str, object]) -> dict[str, object]:
+        return self.create_vocabulary({"term": "occurrence", "idempotency_key": payload["idempotency_key"]}, payload["selection"], vocabulary_id)
 
     def delete_vocabulary(self, vocabulary_id: str) -> bool:
         return self.repository.delete_vocabulary(require_uuid(vocabulary_id, "vocabulary_id"))

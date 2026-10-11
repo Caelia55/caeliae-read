@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from caeliae_read import __version__
-from caeliae_read.api.schemas import ReadingDraftInput, ReadingFeedbackInput, ReadingStateInput, ReadingStateSaved, ReadingSubmitInput, ReadingTaskCreateInput, SummaryNoteCreateInput, SummaryNoteUpdateInput, VocabularyFromSelectionInput, VocabularyInput, VocabularyReviewInput, VocabularyUpdateInput
+from caeliae_read.api.schemas import ReadingDraftInput, ReadingFeedbackInput, ReadingStateInput, ReadingStateSaved, ReadingSubmitInput, ReadingTaskCreateInput, SummaryNoteCreateInput, SummaryNoteUpdateInput, VocabularyDetailOutput, VocabularyEntryResponse, VocabularyFromSelectionInput, VocabularyInput, VocabularyListOutput, VocabularyMutationOutput, VocabularyOccurrenceInput, VocabularyReviewInput, VocabularyUpdateInput
 from caeliae_read.application.service import (
     CheckpointConflictError,
     CaeliaeReadError,
@@ -24,6 +24,7 @@ from caeliae_read.application.service import (
     ReadingValidationError,
     SessionNotFoundError,
     ValidationError,
+    VocabularyNotFoundError,
     get_service,
     require_uuid,
 )
@@ -33,7 +34,7 @@ from caeliae_read.config import PROJECT_ROOT, get_settings
 def problem(error: CaeliaeReadError) -> HTTPException:
     if isinstance(error, (EventConflictError, CheckpointConflictError, ReadingConflictError)):
         code = status.HTTP_409_CONFLICT
-    elif isinstance(error, (PaperNotFoundError, SessionNotFoundError, ReadingNotFoundError)):
+    elif isinstance(error, (PaperNotFoundError, SessionNotFoundError, ReadingNotFoundError, VocabularyNotFoundError)):
         code = status.HTTP_404_NOT_FOUND
     elif isinstance(error, ReadingValidationError):
         code = status.HTTP_422_UNPROCESSABLE_CONTENT
@@ -254,33 +255,42 @@ def create_app(service: CaeliaeReadService | None = None) -> FastAPI:
         try: return {"deleted": read_service.repository.delete_user_annotation(annotation_id, require_uuid(session_id, "session_id"))}
         except CaeliaeReadError as error: raise problem(error) from error
 
-    @app.get("/api/vocabulary")
+    @app.get("/api/vocabulary", response_model=VocabularyListOutput)
     async def list_vocabulary(search: str | None = None, paper_id: str | None = None) -> dict[str, object]:
         try:
             return {"entries": read_service.list_vocabulary(search, paper_id)}
         except CaeliaeReadError as error:
             raise problem(error) from error
 
-    @app.post("/api/vocabulary", status_code=status.HTTP_201_CREATED)
+    @app.post("/api/vocabulary", status_code=status.HTTP_201_CREATED, response_model=VocabularyMutationOutput)
     async def create_vocabulary(payload: VocabularyInput) -> dict[str, object]:
         try:
             return read_service.create_vocabulary(payload.model_dump(mode="json"))
         except CaeliaeReadError as error:
             raise problem(error) from error
 
-    @app.post("/api/vocabulary/from-selection", status_code=status.HTTP_201_CREATED)
+    @app.post("/api/vocabulary/from-selection", status_code=status.HTTP_201_CREATED, response_model=VocabularyMutationOutput)
     async def create_vocabulary_from_selection(payload: VocabularyFromSelectionInput) -> dict[str, object]:
         try:
             data = payload.model_dump(mode="json")
             selection = data.pop("selection")
-            return read_service.create_vocabulary(data, selection)
+            existing_vocabulary_id = data.pop("vocabulary_id", None)
+            return read_service.create_vocabulary(data, selection, existing_vocabulary_id)
         except CaeliaeReadError as error:
             raise problem(error) from error
 
-    @app.put("/api/vocabulary/{vocabulary_id}")
+    @app.put("/api/vocabulary/{vocabulary_id}", response_model=VocabularyEntryResponse)
     async def update_vocabulary(vocabulary_id: str, payload: VocabularyUpdateInput) -> dict[str, object]:
         try:
             return read_service.update_vocabulary(vocabulary_id, payload.model_dump(mode="json"))
+        except CaeliaeReadError as error:
+            raise problem(error) from error
+
+    @app.post("/api/vocabulary/{vocabulary_id}/occurrences", status_code=status.HTTP_201_CREATED, response_model=VocabularyMutationOutput)
+    async def append_vocabulary_occurrence(vocabulary_id: str, payload: VocabularyOccurrenceInput) -> dict[str, object]:
+        try:
+            data = payload.model_dump(mode="json")
+            return read_service.append_vocabulary_occurrence(vocabulary_id, data)
         except CaeliaeReadError as error:
             raise problem(error) from error
 
@@ -308,6 +318,13 @@ def create_app(service: CaeliaeReadService | None = None) -> FastAPI:
         for entry in entries:
             writer.writerow({**entry, "examples": " | ".join(entry["examples"]), "tags": " | ".join(entry["tags"])})
         return Response(output.getvalue(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=caeliae-vocabulary.csv"})
+
+    @app.get("/api/vocabulary/{vocabulary_id}", response_model=VocabularyDetailOutput)
+    async def get_vocabulary_detail(vocabulary_id: str) -> dict[str, object]:
+        try:
+            return read_service.get_vocabulary_detail(vocabulary_id)
+        except CaeliaeReadError as error:
+            raise problem(error) from error
 
     @app.post("/api/vocabulary/reviews", status_code=status.HTTP_201_CREATED)
     async def record_vocabulary_review(payload: VocabularyReviewInput) -> dict[str, object]:

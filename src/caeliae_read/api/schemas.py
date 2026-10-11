@@ -80,6 +80,8 @@ class ReadingStateSaved(StrictModel):
 
 class VocabularyInput(StrictModel):
     term: Annotated[str, Field(min_length=1, max_length=200)]
+    lemma: Annotated[str | None, Field(max_length=200)] = None
+    entry_type: Literal["word", "phrase"] | None = None
     definition: Annotated[str | None, Field(max_length=4_000)] = None
     part_of_speech: Annotated[str | None, Field(max_length=80)] = None
     pronunciation: Annotated[str | None, Field(max_length=160)] = None
@@ -95,6 +97,8 @@ class VocabularyInput(StrictModel):
 
 class VocabularyUpdateInput(StrictModel):
     term: Annotated[str, Field(min_length=1, max_length=200)]
+    lemma: Annotated[str | None, Field(max_length=200)] = None
+    entry_type: Literal["word", "phrase"] | None = None
     definition: Annotated[str | None, Field(max_length=4_000)] = None
     part_of_speech: Annotated[str | None, Field(max_length=80)] = None
     pronunciation: Annotated[str | None, Field(max_length=160)] = None
@@ -105,6 +109,9 @@ class VocabularyUpdateInput(StrictModel):
 
 class VocabularyFromSelectionInput(StrictModel):
     term: Annotated[str, Field(min_length=1, max_length=200)]
+    lemma: Annotated[str | None, Field(max_length=200)] = None
+    entry_type: Literal["word", "phrase"] | None = None
+    vocabulary_id: UUID | None = None
     selection: SelectionInput
     definition: Annotated[str | None, Field(max_length=4_000)] = None
     part_of_speech: Annotated[str | None, Field(max_length=80)] = None
@@ -113,6 +120,70 @@ class VocabularyFromSelectionInput(StrictModel):
     notes: Annotated[str | None, Field(max_length=4_000)] = None
     tags: Annotated[list[str], Field(max_length=20)] = []
     idempotency_key: Annotated[str, Field(min_length=8, max_length=128)]
+
+
+class VocabularyOccurrenceInput(StrictModel):
+    """V1 occurrence append is intentionally selection-backed only."""
+
+    selection: SelectionInput
+    idempotency_key: Annotated[str, Field(min_length=8, max_length=128)]
+
+
+class VocabularyEntryOutput(StrictModel):
+    vocabulary_id: str
+    term: str
+    normalized_term: str
+    definition: str | None = None
+    part_of_speech: str | None = None
+    pronunciation: str | None = None
+    examples: list[str] = Field(default_factory=list)
+    notes: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    source_paper_id: str | None = None
+    source_session_id: str | None = None
+    source_page_number: int | None = None
+    source_selection: dict[str, object] | None = None
+    source_paper_title: str | None = None
+    created_at: str
+    updated_at: str
+    lemma: str | None = None
+    entry_type: Literal["word", "phrase"] = "word"
+    occurrence_count: int = 0
+
+
+class VocabularyOccurrenceOutput(StrictModel):
+    occurrence_id: str
+    vocabulary_id: str
+    surface_form: str
+    paper_id: str | None = None
+    paper_title: str | None = None
+    session_id: str | None = None
+    page_number: int | None = None
+    context_excerpt: str | None = None
+    selection: dict[str, object] | None = None
+    created_at: str
+
+
+class VocabularyListOutput(StrictModel):
+    entries: list[VocabularyEntryOutput]
+
+
+class VocabularyEntryResponse(StrictModel):
+    entry: VocabularyEntryOutput
+
+
+class VocabularyMutationOutput(StrictModel):
+    entry: VocabularyEntryOutput
+    created: bool = False
+    replayed: bool = False
+    occurrence: VocabularyOccurrenceOutput | None = None
+    occurrence_created: bool = False
+    attached: bool = False
+
+
+class VocabularyDetailOutput(StrictModel):
+    entry: VocabularyEntryOutput
+    occurrences: list[VocabularyOccurrenceOutput]
 
 
 class VocabularyReviewInput(StrictModel):

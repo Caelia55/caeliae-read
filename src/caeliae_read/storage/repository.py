@@ -519,12 +519,12 @@ class CaeliaeReadRepository:
         query = "SELECT * FROM vocabulary_entries WHERE 1=1"
         values: list[str] = []
         if search:
-            query += " AND (term LIKE ? OR normalized_term LIKE ? OR definition LIKE ?)"
+            query += " AND (term LIKE ? OR normalized_term LIKE ? OR lemma LIKE ? OR definition LIKE ? OR tags_json LIKE ? OR EXISTS (SELECT 1 FROM vocabulary_occurrences o WHERE o.vocabulary_id = vocabulary_entries.vocabulary_id AND (o.surface_form LIKE ? OR o.context_excerpt LIKE ?)))"
             needle = f"%{search}%"
-            values.extend([needle, needle, needle])
+            values.extend([needle, needle, needle, needle, needle, needle, needle])
         if paper_id:
-            query += " AND source_paper_id = ?"
-            values.append(paper_id)
+            query += " AND (source_paper_id = ? OR EXISTS (SELECT 1 FROM vocabulary_occurrences o WHERE o.vocabulary_id = vocabulary_entries.vocabulary_id AND o.paper_id = ?))"
+            values.extend([paper_id, paper_id])
         query += " ORDER BY normalized_term COLLATE NOCASE, created_at, vocabulary_id"
         with self.connection() as connection:
             rows = connection.execute(query, values).fetchall()
@@ -545,19 +545,60 @@ class CaeliaeReadRepository:
                 connection.rollback()
                 return json.loads(existing["response_json"]), True
             connection.execute(
-                "INSERT INTO vocabulary_entries(vocabulary_id,term,normalized_term,definition,part_of_speech,pronunciation,examples_json,notes,tags_json,source_paper_id,source_session_id,source_page_number,source_selection_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (entry["vocabulary_id"], entry["term"], entry["normalized_term"], entry["definition"], entry["part_of_speech"], entry["pronunciation"], json.dumps(entry["examples"], ensure_ascii=False), entry["notes"], json.dumps(entry["tags"], ensure_ascii=False), entry["source_paper_id"], entry["source_session_id"], entry["source_page_number"], json.dumps(entry["source_selection"], ensure_ascii=False) if entry["source_selection"] else None, created_at, created_at),
+                "INSERT INTO vocabulary_entries(vocabulary_id,term,normalized_term,lemma,entry_type,definition,part_of_speech,pronunciation,examples_json,notes,tags_json,source_paper_id,source_session_id,source_page_number,source_selection_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (entry["vocabulary_id"], entry["term"], entry["normalized_term"], entry.get("lemma"), entry.get("entry_type", "word"), entry["definition"], entry["part_of_speech"], entry["pronunciation"], json.dumps(entry["examples"], ensure_ascii=False), entry["notes"], json.dumps(entry["tags"], ensure_ascii=False), entry["source_paper_id"], entry["source_session_id"], entry["source_page_number"], json.dumps(entry["source_selection"], ensure_ascii=False) if entry["source_selection"] else None, created_at, created_at),
             )
             response = json.loads(response_json)
             connection.execute("INSERT INTO vocabulary_events(idempotency_key,payload_sha256,response_json,created_at) VALUES (?,?,?,?)", (idempotency_key, payload_sha256, response_json, created_at))
             connection.commit()
             return response, False
 
+    @staticmethod
+    def _insert_vocabulary_entry(connection: sqlite3.Connection, entry: dict[str, Any], created_at: str) -> None:
+        connection.execute(
+            "INSERT INTO vocabulary_entries(vocabulary_id,term,normalized_term,lemma,entry_type,definition,part_of_speech,pronunciation,examples_json,notes,tags_json,source_paper_id,source_session_id,source_page_number,source_selection_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (entry["vocabulary_id"], entry["term"], entry["normalized_term"], entry.get("lemma"), entry.get("entry_type", "word"), entry["definition"], entry["part_of_speech"], entry["pronunciation"], json.dumps(entry["examples"], ensure_ascii=False), entry["notes"], json.dumps(entry["tags"], ensure_ascii=False), entry["source_paper_id"], entry["source_session_id"], entry["source_page_number"], json.dumps(entry["source_selection"], ensure_ascii=False) if entry["source_selection"] else None, created_at, created_at),
+        )
+
+    @staticmethod
+    def _insert_vocabulary_occurrence(connection: sqlite3.Connection, occurrence: dict[str, Any]) -> None:
+        connection.execute(
+            "INSERT INTO vocabulary_occurrences(occurrence_id,vocabulary_id,surface_form,paper_id,session_id,page_number,context_excerpt,selection_json,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            (occurrence["occurrence_id"], occurrence["vocabulary_id"], occurrence["surface_form"], occurrence["paper_id"], occurrence["session_id"], occurrence["page_number"], occurrence["context_excerpt"], occurrence["selection_json"], occurrence["created_at"]),
+        )
+
+    @staticmethod
+    def _insert_vocabulary_event(connection: sqlite3.Connection, *, idempotency_key: str, payload_sha256: str, response_json: str, created_at: str) -> None:
+        connection.execute("INSERT INTO vocabulary_events(idempotency_key,payload_sha256,response_json,created_at) VALUES (?,?,?,?)", (idempotency_key, payload_sha256, response_json, created_at))
+
+    @staticmethod
+    def _insert_vocabulary_occurrence_event(connection: sqlite3.Connection, *, idempotency_key: str, payload_sha256: str, response_json: str, created_at: str) -> None:
+        connection.execute("INSERT INTO vocabulary_occurrence_events(idempotency_key,payload_sha256,response_json,created_at) VALUES (?,?,?,?)", (idempotency_key, payload_sha256, response_json, created_at))
+
+    def save_vocabulary_with_occurrence(
+        self, *, entry: dict[str, Any], occurrence: dict[str, Any], idempotency_key: str,
+        payload_sha256: str, response_json: str, created_at: str,
+    ) -> tuple[dict[str, Any], bool]:
+        """Atomically create an entry, its initial occurrence, and entry event."""
+        with self.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            existing = connection.execute("SELECT payload_sha256,response_json FROM vocabulary_events WHERE idempotency_key=?", (idempotency_key,)).fetchone()
+            if existing:
+                if existing["payload_sha256"] != payload_sha256:
+                    raise IdempotencyConflictError("idempotency_key was already used with a different payload")
+                connection.rollback()
+                return json.loads(existing["response_json"]), True
+            self._insert_vocabulary_entry(connection, entry, created_at)
+            self._insert_vocabulary_occurrence(connection, occurrence)
+            self._insert_vocabulary_event(connection, idempotency_key=idempotency_key, payload_sha256=payload_sha256, response_json=response_json, created_at=created_at)
+            connection.commit()
+            return json.loads(response_json), False
+
     def update_vocabulary(self, vocabulary_id: str, values: dict[str, Any], updated_at: str) -> VocabularyEntry:
         with self.connection() as connection:
             changed = connection.execute(
-                "UPDATE vocabulary_entries SET term=?,normalized_term=?,definition=?,part_of_speech=?,pronunciation=?,examples_json=?,notes=?,tags_json=?,updated_at=? WHERE vocabulary_id=?",
-                (values["term"], values["normalized_term"], values["definition"], values["part_of_speech"], values["pronunciation"], json.dumps(values["examples"], ensure_ascii=False), values["notes"], json.dumps(values["tags"], ensure_ascii=False), updated_at, vocabulary_id),
+                "UPDATE vocabulary_entries SET term=?,normalized_term=?,lemma=?,entry_type=?,definition=?,part_of_speech=?,pronunciation=?,examples_json=?,notes=?,tags_json=?,updated_at=? WHERE vocabulary_id=?",
+                (values["term"], values["normalized_term"], values.get("lemma"), values.get("entry_type", "word"), values["definition"], values["part_of_speech"], values["pronunciation"], json.dumps(values["examples"], ensure_ascii=False), values["notes"], json.dumps(values["tags"], ensure_ascii=False), updated_at, vocabulary_id),
             )
             if changed.rowcount != 1:
                 raise NotFoundError("vocabulary entry not found")
@@ -586,19 +627,9 @@ class CaeliaeReadRepository:
         selection_json: str | None,
         created_at: str,
     ) -> VocabularyOccurrence:
+        occurrence = {"occurrence_id": occurrence_id, "vocabulary_id": vocabulary_id, "surface_form": surface_form, "paper_id": paper_id, "session_id": session_id, "page_number": page_number, "context_excerpt": context_excerpt, "selection_json": selection_json, "created_at": created_at}
         with self.connection() as connection:
-            connection.execute(
-                """
-                INSERT INTO vocabulary_occurrences(
-                    occurrence_id, vocabulary_id, surface_form, paper_id, session_id,
-                    page_number, context_excerpt, selection_json, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    occurrence_id, vocabulary_id, surface_form, paper_id, session_id,
-                    page_number, context_excerpt, selection_json, created_at,
-                ),
-            )
+            self._insert_vocabulary_occurrence(connection, occurrence)
             connection.commit()
         result = self.get_vocabulary_occurrence(occurrence_id)
         if result is None:
@@ -623,6 +654,31 @@ class CaeliaeReadRepository:
                 (vocabulary_id,),
             ).fetchall()
         return [self._vocabulary_occurrence(row) for row in rows]
+
+    def count_vocabulary_occurrences(self, vocabulary_id: str) -> int:
+        with self.connection() as connection:
+            row = connection.execute("SELECT COUNT(*) AS count FROM vocabulary_occurrences WHERE vocabulary_id=?", (vocabulary_id,)).fetchone()
+        return int(row["count"])
+
+    def append_vocabulary_occurrence(
+        self, *, occurrence: dict[str, Any], idempotency_key: str, payload_sha256: str,
+        response_json: str, created_at: str,
+    ) -> tuple[dict[str, Any], bool]:
+        """Atomically append one occurrence and record its replay event."""
+        with self.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            existing = connection.execute("SELECT payload_sha256,response_json FROM vocabulary_occurrence_events WHERE idempotency_key=?", (idempotency_key,)).fetchone()
+            if existing:
+                if existing["payload_sha256"] != payload_sha256:
+                    raise IdempotencyConflictError("occurrence idempotency_key was already used with a different payload")
+                connection.rollback()
+                return json.loads(existing["response_json"]), True
+            if connection.execute("SELECT 1 FROM vocabulary_entries WHERE vocabulary_id=?", (occurrence["vocabulary_id"],)).fetchone() is None:
+                raise NotFoundError("vocabulary entry not found")
+            self._insert_vocabulary_occurrence(connection, occurrence)
+            self._insert_vocabulary_occurrence_event(connection, idempotency_key=idempotency_key, payload_sha256=payload_sha256, response_json=response_json, created_at=created_at)
+            connection.commit()
+            return json.loads(response_json), False
 
     def get_vocabulary_occurrence_event(self, idempotency_key: str) -> tuple[str, str] | None:
         with self.connection() as connection:

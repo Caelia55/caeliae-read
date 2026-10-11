@@ -292,29 +292,40 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
 )
 
 
-def _entry_type_for_term(term: str) -> str:
+def derive_entry_type(term: str) -> str:
     return "phrase" if any(character.isspace() for character in term.strip()) else "word"
 
 
-def _safe_selection_metadata(raw_selection: str | None) -> tuple[str, str | None, str | None]:
+_entry_type_for_term = derive_entry_type
+
+
+def derive_selection_occurrence(raw_selection: str | dict[str, object] | None) -> tuple[str, str | None, str | None]:
     """Return surface/context while preserving raw selection JSON in storage."""
     if not raw_selection:
         return "", None, None
-    try:
-        selection = json.loads(raw_selection)
-    except (TypeError, ValueError, json.JSONDecodeError):
-        return "", None, raw_selection
+    if isinstance(raw_selection, dict):
+        selection = raw_selection
+        raw_json = json.dumps(raw_selection, ensure_ascii=False, separators=(",", ":"))
+    else:
+        raw_json = raw_selection
+        try:
+            selection = json.loads(raw_selection)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return "", None, raw_selection
     if not isinstance(selection, dict):
-        return "", None, raw_selection
+        return "", None, raw_json
     exact_text = selection.get("exact_text")
     if not isinstance(exact_text, str) or not exact_text.strip():
-        return "", None, raw_selection
+        return "", None, raw_json
     prefix = selection.get("prefix", "")
     suffix = selection.get("suffix", "")
     prefix = prefix if isinstance(prefix, str) else ""
     suffix = suffix if isinstance(suffix, str) else ""
     context = f"{prefix}{exact_text}{suffix}" or None
-    return exact_text, context, raw_selection
+    return exact_text, context, raw_json
+
+
+_safe_selection_metadata = derive_selection_occurrence
 
 
 def _backfill_vocabulary_occurrences(connection: sqlite3.Connection) -> None:
