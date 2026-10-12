@@ -806,16 +806,21 @@ export function App() {
     return true;
   }, []);
 
-  const isSummaryPlacementTarget = useCallback((target: EventTarget | null, clientX: number) => {
+  const isSummaryPlacementTarget = useCallback((target: EventTarget | null, clientX: number, clientY: number) => {
     const page = pdfPageRef.current;
+    const stage = pageShellRef.current;
     const element = eventTargetElement(target);
     if (!page || !element || isTextLayerContentTarget(target)) return false;
     if (element.closest(".annotation-mark, .sticky-note-marker, .summary-note-marker, button, a, input, label, textarea, select, [role=dialog], .selection-composer, .annotation-card, .sticky-composer, .summary-note-composer")) return false;
     const pageRect = page.getBoundingClientRect();
     const inBlankLayer = element === page || element === canvasRef.current || element === textLayerRef.current || Boolean(element.closest(".text-layer, .selection-preview-layer, .annotation-layer, .sticky-layer, .summary-note-layer"));
-    if (!inBlankLayer) return false;
-    const gutterWidth = Math.min(72, Math.max(32, pageRect.width * 0.14));
-    return clientX >= pageRect.left && clientX <= pageRect.left + gutterWidth;
+    const stageRect = stage?.getBoundingClientRect();
+    const inLeftGutter = Boolean(stageRect && element === stage
+      && clientX >= stageRect.left && clientX < pageRect.left
+      && clientY >= pageRect.top && clientY <= pageRect.bottom);
+    if (!inBlankLayer && !inLeftGutter) return false;
+    const withinPage = clientX >= pageRect.left && clientX <= pageRect.right && clientY >= pageRect.top && clientY <= pageRect.bottom;
+    return withinPage || inLeftGutter;
   }, []);
 
   const handleStagePointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
@@ -974,7 +979,7 @@ export function App() {
     if (suppressStageClickRef.current || !isDragSurfaceTarget(event.target)) return;
     if (drawerOpenRef.current || annotationCardOpenRef.current) return;
     if (stickyPlacementMode && openStickyComposerAt(event.clientX, event.clientY)) return;
-    if (summaryPlacementMode && isSummaryPlacementTarget(event.target, event.clientX) && openSummaryComposerAt(event.clientX, event.clientY)) return;
+    if (summaryPlacementMode && isSummaryPlacementTarget(event.target, event.clientX, event.clientY) && openSummaryComposerAt(event.clientX, event.clientY)) return;
     if (toolbarSlim) revealToolbar();
     else setToolbarSlim(true);
   }, [isDragSurfaceTarget, isSummaryPlacementTarget, openStickyComposerAt, openSummaryComposerAt, revealToolbar, stickyPlacementMode, summaryPlacementMode, toolbarSlim]);
@@ -2457,7 +2462,7 @@ export function App() {
                   const canStartPlacement = isDragSurfaceTarget(event.target);
                   if (canStartPlacement) stickyPointerRef.current = { pointerId: event.pointerId };
                 }
-                if (summaryPlacementMode && event.button === 0 && isSummaryPlacementTarget(event.target, event.clientX)) {
+                if (summaryPlacementMode && event.button === 0 && isSummaryPlacementTarget(event.target, event.clientX, event.clientY)) {
                   summaryPointerRef.current = { pointerId: event.pointerId };
                 }
                 handleStagePointerDown(event);

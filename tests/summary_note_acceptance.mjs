@@ -24,8 +24,11 @@ try {
 
   const pageBox = await page.locator(".pdf-page").boundingBox();
   assert(pageBox && pageBox.width > 0 && pageBox.height > 0, "PDF page is not measurable");
+  const stageBox = await page.locator(".page-stage").boundingBox();
+  assert(stageBox && pageBox.x - stageBox.x > 12, "PDF page left gutter is not measurable");
   const targetY = 0.34;
-  await page.mouse.click(pageBox.x + 10, pageBox.y + pageBox.height * targetY);
+  const gutterX = pageBox.x - Math.min(18, pageBox.x - stageBox.x - 4);
+  await page.mouse.click(gutterX, pageBox.y + pageBox.height * targetY);
   await page.getByRole("textbox", { name: "大意内容" }).waitFor();
   await page.getByRole("textbox", { name: "大意内容" }).fill("This paragraph introduces the central mechanism.");
   await page.getByRole("button", { name: "保存大意" }).click();
@@ -76,6 +79,45 @@ try {
   await page.keyboard.press("Escape");
   assert.equal(await page.locator(".summary-placement-hint").count(), 0, "Escape did not cancel Summary Note placement");
 
+  const blankPoint = await page.evaluate(() => {
+    const pageNode = document.querySelector(".pdf-page");
+    const textLayer = document.querySelector(".text-layer");
+    const canvas = document.querySelector(".pdf-page canvas");
+    if (!pageNode || !textLayer || !(canvas instanceof HTMLCanvasElement)) return null;
+    const rect = pageNode.getBoundingClientRect();
+    for (const yRatio of [.16, .28, .46, .64, .82, .94]) {
+      for (const xRatio of [.08, .22, .46, .72, .94]) {
+        const x = rect.left + rect.width * xRatio;
+        const y = rect.top + rect.height * yRatio;
+        const target = document.elementFromPoint(x, y);
+        if (!target || target.closest(".text-layer span")) continue;
+        const isBlankPageTarget = target === pageNode || target === canvas || target === textLayer || target.closest(".text-layer, .selection-preview-layer, .annotation-layer, .sticky-layer, .summary-note-layer");
+        if (isBlankPageTarget) return { x, y, normalizedY: yRatio, target: target.className || target.tagName };
+      }
+    }
+    return null;
+  });
+  assert(blankPoint, "No blank page point was measurable");
+  await page.mouse.click(blankPoint.x, blankPoint.y);
+  await page.waitForTimeout(80);
+  assert.equal(await page.getByRole("textbox", { name: "大意内容" }).count(), 0, "click after Escape unexpectedly opened Summary Note editor");
+  assert.equal(await page.locator(".summary-placement-hint").count(), 0, "click after Escape unexpectedly re-entered placement mode");
+  await summaryTool.click();
+  await page.locator(".summary-placement-hint").waitFor();
+  await page.mouse.click(blankPoint.x, blankPoint.y);
+  await page.getByRole("textbox", { name: "大意内容" }).waitFor();
+  await page.getByRole("textbox", { name: "大意内容" }).fill("Blank page area summary.");
+  await page.getByRole("button", { name: "保存大意" }).click();
+  const blankMarker = page.locator('.summary-note-marker[aria-label="大意：Blank page area summary."]');
+  await blankMarker.waitFor();
+  const blankListed = await page.request.get(`${baseURL}/api/summary-notes`, { params: { paper_id: paperId } });
+  const blankCreated = (await blankListed.json()).summary_notes.find((note) => note.text === "Blank page area summary.");
+  assert(blankCreated && Math.abs(blankCreated.normalized_y - blankPoint.normalizedY) < .05, "blank page placement did not persist page-relative y");
+  await blankMarker.click();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "删除" }).click();
+  await page.waitForFunction(() => !document.querySelector('.summary-note-marker[aria-label="大意：Blank page area summary."]'));
+
   await editedMarker.click();
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "删除" }).click();
@@ -87,6 +129,8 @@ try {
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth), false, "Summary Note introduced responsive overflow");
   console.log(JSON.stringify({
     created: true,
+    gutterPlacement: true,
+    blankPagePlacement: true,
     edited: true,
     indexFilterAndJump: true,
     normalizedY: created.normalized_y,
