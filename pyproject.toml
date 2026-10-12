@@ -22,6 +22,9 @@ test = [
   "httpx>=0.28,<1",
   "pytest>=8.4,<9",
 ]
+lookup = [
+  "nltk>=3.9,<4",
+]
 
 [project.scripts]
 caeliae-read-api = "caeliae_read.api.app:main"

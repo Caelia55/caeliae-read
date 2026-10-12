@@ -129,6 +129,70 @@ class VocabularyOccurrenceInput(StrictModel):
     idempotency_key: Annotated[str, Field(min_length=8, max_length=128)]
 
 
+class LookupSource(StrictModel):
+    kind: Literal["dictionary", "translation", "ai"]
+    provider: Annotated[str, Field(min_length=1, max_length=80)]
+    version: Annotated[str | None, Field(max_length=80)] = None
+
+
+class LookupDefinition(StrictModel):
+    text: Annotated[str, Field(min_length=1, max_length=4_000)]
+    source: LookupSource
+
+
+class LookupCandidate(StrictModel):
+    lemma: Annotated[str | None, Field(max_length=200)] = None
+    part_of_speech: Annotated[str | None, Field(max_length=80)] = None
+    definitions: Annotated[list[LookupDefinition], Field(max_length=20)] = Field(default_factory=list)
+    variants: Annotated[list[str], Field(max_length=50)] = Field(default_factory=list)
+
+
+class LookupTranslation(StrictModel):
+    text: Annotated[str, Field(min_length=1, max_length=4_000)]
+    language: Annotated[str, Field(min_length=2, max_length=32)]
+    source: LookupSource
+
+
+class VocabularyLookupInput(StrictModel):
+    text: Annotated[str, Field(min_length=1, max_length=200)]
+    locale: Annotated[str, Field(min_length=2, max_length=32)] = "en"
+    target_locale: Annotated[str | None, Field(min_length=2, max_length=32)] = None
+
+    @field_validator("text")
+    @classmethod
+    def validate_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("text must not be blank")
+        return value
+
+    @field_validator("locale")
+    @classmethod
+    def normalize_locale(cls, value: str) -> str:
+        value = value.strip().lower()
+        if not value:
+            raise ValueError("locale must not be blank")
+        return value
+
+    @field_validator("target_locale")
+    @classmethod
+    def normalize_target_locale(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip().lower()
+        return value or None
+
+
+class VocabularyLookupOutput(StrictModel):
+    query: str
+    normalized_query: str
+    entry_type: Literal["word", "phrase"]
+    status: Literal["ok", "no_result", "unsupported_phrase", "unavailable"]
+    candidates: list[LookupCandidate] = Field(default_factory=list)
+    translations: list[LookupTranslation] = Field(default_factory=list)
+    message: str | None = None
+
+
 class VocabularyEntryOutput(StrictModel):
     vocabulary_id: str
     term: str

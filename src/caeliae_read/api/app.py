@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from caeliae_read import __version__
-from caeliae_read.api.schemas import ReadingDraftInput, ReadingFeedbackInput, ReadingStateInput, ReadingStateSaved, ReadingSubmitInput, ReadingTaskCreateInput, SummaryNoteCreateInput, SummaryNoteUpdateInput, VocabularyDetailOutput, VocabularyEntryResponse, VocabularyFromSelectionInput, VocabularyInput, VocabularyListOutput, VocabularyMutationOutput, VocabularyOccurrenceInput, VocabularyReviewInput, VocabularyUpdateInput
+from caeliae_read.api.schemas import ReadingDraftInput, ReadingFeedbackInput, ReadingStateInput, ReadingStateSaved, ReadingSubmitInput, ReadingTaskCreateInput, SummaryNoteCreateInput, SummaryNoteUpdateInput, VocabularyDetailOutput, VocabularyEntryResponse, VocabularyFromSelectionInput, VocabularyInput, VocabularyListOutput, VocabularyLookupInput, VocabularyLookupOutput, VocabularyMutationOutput, VocabularyOccurrenceInput, VocabularyReviewInput, VocabularyUpdateInput
 from caeliae_read.application.service import (
     CheckpointConflictError,
     CaeliaeReadError,
@@ -28,6 +28,7 @@ from caeliae_read.application.service import (
     get_service,
     require_uuid,
 )
+from caeliae_read.application.lookup import LookupProvider, VocabularyLookupService, get_lookup_provider
 from caeliae_read.config import PROJECT_ROOT, get_settings
 
 
@@ -55,9 +56,13 @@ def problem(error: CaeliaeReadError) -> HTTPException:
     return HTTPException(status_code=code, detail=detail)
 
 
-def create_app(service: CaeliaeReadService | None = None) -> FastAPI:
+def create_app(
+    service: CaeliaeReadService | None = None,
+    lookup_provider: LookupProvider | None = None,
+) -> FastAPI:
     settings = get_settings()
     read_service = service or get_service()
+    lookup_service = VocabularyLookupService(lookup_provider or get_lookup_provider())
     app = FastAPI(title="Caeliae Read", version=__version__, docs_url="/api/docs")
     app.add_middleware(
         CORSMiddleware,
@@ -261,6 +266,14 @@ def create_app(service: CaeliaeReadService | None = None) -> FastAPI:
             return {"entries": read_service.list_vocabulary(search, paper_id)}
         except CaeliaeReadError as error:
             raise problem(error) from error
+
+    @app.post("/api/vocabulary/lookup", response_model=VocabularyLookupOutput)
+    async def lookup_vocabulary(payload: VocabularyLookupInput) -> VocabularyLookupOutput:
+        return lookup_service.lookup(
+            payload.text,
+            locale=payload.locale,
+            target_locale=payload.target_locale,
+        )
 
     @app.post("/api/vocabulary", status_code=status.HTTP_201_CREATED, response_model=VocabularyMutationOutput)
     async def create_vocabulary(payload: VocabularyInput) -> dict[str, object]:

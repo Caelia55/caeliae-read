@@ -30,6 +30,28 @@ The current release also includes an optional local stdio MCP integration for
 scoped Reader and Reading capabilities. It is not required to use the browser
 application.
 
+### Optional local vocabulary lookup
+
+The read-only `POST /api/vocabulary/lookup` endpoint can use a local NLTK
+WordNet corpus for English lemma, part-of-speech, and definition suggestions.
+It is not enabled by the base install, never downloads a corpus during a
+request, and does not write lookup results to the Vocabulary database.
+
+Install the optional Python adapter and corpus explicitly if needed:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e ".[lookup]"
+.\.venv\Scripts\python.exe -m nltk.downloader wordnet
+```
+
+The corpus is stored outside the repository and is not bundled or vendored by
+Caeliae Read. If it is unavailable, the endpoint returns a structured
+`unavailable` result. The NLTK adapter is Apache-2.0 licensed; WordNet data
+retains its own attribution and license terms. See the
+[Princeton WordNet license](https://wordnet.princeton.edu/license-and-commercial-use).
+The V1 local provider does not perform translation and does not send selected
+text or surrounding context over the network.
+
 ## Requirements
 
 The repository is developed and tested with:
