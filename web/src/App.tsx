@@ -40,7 +40,7 @@ import {
 } from "./api";
 import { openReadingTask as openReadingTaskApi, type ReadingTaskDetail } from "./readingApi";
 import { ReadingTaskPanel } from "./ReadingTaskPanel";
-import { listVocabulary as listVocabularyEntries, lookupVocabulary, type VocabularyEntry as VocabularyListEntry, type VocabularyLookupOutput, type VocabularyLookupSource } from "./vocabularyApi";
+import { listVocabulary as listVocabularyEntries, lookupVocabulary, type VocabularyEntry as VocabularyListEntry, type VocabularyLookupCandidate, type VocabularyLookupOutput, type VocabularyLookupSource } from "./vocabularyApi";
 
 GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -56,6 +56,7 @@ const STICKY_PLACEMENT_MESSAGE = "点击页面空白处放置便签 · Esc 取�
 const SUMMARY_PLACEMENT_MESSAGE = "点击页面左侧空白处添加大意 · Esc 取消";
 
 type SelectionDraft = Omit<SelectionState, "revision">;
+type LookupEditDraft = { lemma: string; part_of_speech: string; definition: string };
 type StickyNoteDraft = { x: number; y: number; text: string; style_key: UserAnnotationStyle; id?: string };
 type SummaryNoteDraft = { normalized_y: number; text: string; id?: string };
 type StickyDragState = {
@@ -535,6 +536,11 @@ export function App() {
   const [selectionLookup, setSelectionLookup] = useState<VocabularyLookupOutput | null>(null);
   const [selectionLookupLoading, setSelectionLookupLoading] = useState(false);
   const [selectionLookupError, setSelectionLookupError] = useState<string | null>(null);
+  const [selectionLookupCandidate, setSelectionLookupCandidate] = useState<VocabularyLookupCandidate | null>(null);
+  const [selectionLookupEdit, setSelectionLookupEdit] = useState<LookupEditDraft | null>(null);
+  const [selectionLookupEditBaseline, setSelectionLookupEditBaseline] = useState<LookupEditDraft | null>(null);
+  const [selectionLookupSaveKey, setSelectionLookupSaveKey] = useState("");
+  const [selectionLookupSaved, setSelectionLookupSaved] = useState(false);
   const [selectionComposerStyle, setSelectionComposerStyle] = useState<UserAnnotationStyle>(() => {
     try {
       const stored = localStorage.getItem(LAST_USER_ANNOTATION_STYLE);
@@ -596,6 +602,8 @@ export function App() {
   const selectionPreviewFrameRef = useRef<number | null>(null);
   const selectionLookupRequestRef = useRef(0);
   const selectionLookupAbortRef = useRef<AbortController | null>(null);
+  const selectionLookupSaveRequestRef = useRef(0);
+  const selectionLookupSavingRef = useRef(false);
   const selectionPromptOpenRef = useRef(false);
   const selectionComposerOpenRef = useRef(false);
   const toolbarReleaseTimerRef = useRef<number | null>(null);
@@ -628,11 +636,21 @@ export function App() {
 
   const clearSelectionLookup = useCallback(() => {
     selectionLookupRequestRef.current += 1;
+    selectionLookupSaveRequestRef.current += 1;
     selectionLookupAbortRef.current?.abort();
     selectionLookupAbortRef.current = null;
     setSelectionLookup(null);
     setSelectionLookupLoading(false);
     setSelectionLookupError(null);
+    setSelectionLookupCandidate(null);
+    setSelectionLookupEdit(null);
+    setSelectionLookupEditBaseline(null);
+    setSelectionLookupSaveKey("");
+    setSelectionLookupSaved(false);
+    if (selectionLookupSavingRef.current) {
+      selectionLookupSavingRef.current = false;
+      setVocabularySaving(false);
+    }
   }, []);
 
   const overlayNode = useCallback((kind: OverlayKind) => kind === "composer" ? selectionComposerRef.current : kind === "annotation" ? cardRef.current : kind === "sticky" ? stickyComposerRef.current : summaryComposerRef.current, []);
@@ -1805,6 +1823,70 @@ export function App() {
     }
   }, [selectionComposerDraft, selectionLookupLoading]);
 
+  const selectLookupCandidate = useCallback((candidate: VocabularyLookupCandidate) => {
+    const draft: LookupEditDraft = {
+      lemma: candidate.lemma,
+      part_of_speech: candidate.part_of_speech,
+      definition: candidate.definitions[0]?.text ?? "",
+    };
+    setSelectionLookupCandidate(candidate);
+    setSelectionLookupEdit(draft);
+    setSelectionLookupEditBaseline(draft);
+    setSelectionLookupSaveKey(crypto.randomUUID());
+    setSelectionLookupSaved(false);
+  }, []);
+
+  const returnToLookupCandidates = useCallback(() => {
+    const current = selectionLookupEdit;
+    const baseline = selectionLookupEditBaseline;
+    const dirty = Boolean(current && baseline && (current.lemma !== baseline.lemma || current.part_of_speech !== baseline.part_of_speech || current.definition !== baseline.definition));
+    if (dirty && !window.confirm("放弃当前查词编辑并返回候选列表？")) return;
+    selectionLookupSaveRequestRef.current += 1;
+    selectionLookupSavingRef.current = false;
+    setVocabularySaving(false);
+    setSelectionLookupCandidate(null);
+    setSelectionLookupEdit(null);
+    setSelectionLookupEditBaseline(null);
+    setSelectionLookupSaveKey("");
+    setSelectionLookupSaved(false);
+  }, [selectionLookupEdit, selectionLookupEditBaseline]);
+
+  const saveLookupSuggestionAsVocabulary = useCallback(async () => {
+    const selection = selectionComposerDraft;
+    const candidate = selectionLookupCandidate;
+    const edit = selectionLookupEdit;
+    const key = selectionLookupSaveKey;
+    if (!selection || !candidate || !edit || !key || vocabularySaving || selectionLookupSaved) return;
+    const requestId = selectionLookupSaveRequestRef.current + 1;
+    selectionLookupSaveRequestRef.current = requestId;
+    selectionLookupSavingRef.current = true;
+    setVocabularySaving(true);
+    try {
+      const result = await createVocabularyFromSelection({
+        term: selection.exact_text,
+        lemma: edit.lemma.trim() || null,
+        entry_type: selectionLookup?.entry_type ?? "word",
+        part_of_speech: edit.part_of_speech.trim() || null,
+        definition: edit.definition.trim() || null,
+        selection: { ...selection, revision: selectionVocabularyRevisionRef.current },
+        idempotency_key: key,
+      });
+      if (requestId !== selectionLookupSaveRequestRef.current) return;
+      const title = edit.lemma.trim() || selection.exact_text;
+      setSelectionLookupSaved(true);
+      setMessage(result.replayed ? `词条已确认：${title}` : `已加入词汇：${title}`);
+    } catch (error) {
+      if (requestId === selectionLookupSaveRequestRef.current) {
+        setMessage(error instanceof Error ? `保存查词结果失败：${error.message}` : "保存查词结果失败");
+      }
+    } finally {
+      if (requestId === selectionLookupSaveRequestRef.current) {
+        selectionLookupSavingRef.current = false;
+        setVocabularySaving(false);
+      }
+    }
+  }, [selectionComposerDraft, selectionLookup, selectionLookupCandidate, selectionLookupEdit, selectionLookupSaveKey, selectionLookupSaved, vocabularySaving]);
+
   const openSelectionAttach = useCallback(() => {
     setSelectionAttachSearch(selectionComposerDraft?.exact_text ?? "");
     setSelectionAttachEntries([]);
@@ -2207,7 +2289,7 @@ export function App() {
               <p className="selection-lookup-surface"><span>选中原文</span>{selectionComposerDraft.exact_text}</p>
               {selectionLookupLoading && <p className="selection-lookup-status" data-testid="selection-lookup-loading">正在查词…</p>}
               {selectionLookupError && <p className="selection-lookup-status is-error" data-testid="selection-lookup-error">{selectionLookupError}</p>}
-              {selectionLookup?.status === "ok" && <div className="selection-lookup-candidates" data-testid="selection-lookup-candidates">
+              {selectionLookup?.status === "ok" && !selectionLookupCandidate && <div className="selection-lookup-candidates" data-testid="selection-lookup-candidates">
                 {selectionLookup.candidates.map((candidate, index) => <article className="selection-lookup-candidate" data-testid="selection-lookup-candidate" key={`${candidate.lemma}-${candidate.part_of_speech}-${index}`}>
                   <div className="selection-lookup-candidate-heading">
                     <strong>{candidate.lemma}</strong>
@@ -2220,7 +2302,47 @@ export function App() {
                       <small className="selection-lookup-source" data-testid="selection-lookup-source">{lookupSourceLabel(definition.source)}</small>
                     </li>)}
                   </ol>}
+                  <button type="button" className="selection-lookup-use" data-testid="selection-lookup-use-candidate" onClick={() => selectLookupCandidate(candidate)}>使用此候选</button>
                 </article>)}
+              </div>}
+              {selectionLookup?.status === "ok" && selectionLookupCandidate && selectionLookupEdit && <div className="selection-lookup-edit" data-testid="selection-lookup-edit">
+                <div className="selection-lookup-edit-heading">
+                  <strong>确认查词候选</strong>
+                  <button type="button" className="selection-lookup-back" data-testid="selection-lookup-back" onClick={returnToLookupCandidates}>返回候选</button>
+                </div>
+                <p className="selection-lookup-edit-candidate">{selectionLookupCandidate.lemma} · {selectionLookupCandidate.part_of_speech}</p>
+                {selectionLookupCandidate.definitions.length > 1 && <label className="selection-lookup-field">选择释义
+                  <select
+                    aria-label="选择释义"
+                    value={selectionLookupEdit.definition}
+                    onChange={(event) => setSelectionLookupEdit((current) => current ? { ...current, definition: event.target.value } : current)}
+                  >
+                    {selectionLookupCandidate.definitions.map((definition, index) => <option key={`${definition.text}-${index}`} value={definition.text}>{definition.text}</option>)}
+                  </select>
+                </label>}
+                <label className="selection-lookup-field">Lemma / canonical form
+                  <input
+                    aria-label="Lemma / canonical form"
+                    value={selectionLookupEdit.lemma}
+                    onChange={(event) => setSelectionLookupEdit((current) => current ? { ...current, lemma: event.target.value } : current)}
+                  />
+                </label>
+                <label className="selection-lookup-field">词性
+                  <input
+                    aria-label="词性"
+                    value={selectionLookupEdit.part_of_speech}
+                    onChange={(event) => setSelectionLookupEdit((current) => current ? { ...current, part_of_speech: event.target.value } : current)}
+                  />
+                </label>
+                <label className="selection-lookup-field">当前语境含义
+                  <textarea
+                    aria-label="当前语境含义"
+                    value={selectionLookupEdit.definition}
+                    onChange={(event) => setSelectionLookupEdit((current) => current ? { ...current, definition: event.target.value } : current)}
+                  />
+                </label>
+                <p className="selection-lookup-edit-hint">保存时保留当前选区原文；只写入你确认的 lemma、词性和释义。</p>
+                <button type="button" className="selection-lookup-save" data-testid="selection-lookup-save-new" disabled={vocabularySaving || selectionLookupSaved} onClick={() => void saveLookupSuggestionAsVocabulary()}>{selectionLookupSaved ? "已保存" : vocabularySaving ? "保存中…" : "应用并新建词条"}</button>
               </div>}
               {selectionLookup?.status === "no_result" && <p className="selection-lookup-status" data-testid="selection-lookup-no-result">未找到可靠的词典结果。</p>}
               {selectionLookup?.status === "unsupported_phrase" && <p className="selection-lookup-status" data-testid="selection-lookup-unsupported">当前本地词典暂不支持这个短语的完整查询。</p>}
@@ -2259,6 +2381,7 @@ export function App() {
             </div>
             {selectionAttachOpen && <div className="selection-attach-panel" role="dialog" aria-label="选择已有词条">
               <div className="selection-attach-heading"><strong>选择要挂载的词条</strong><button type="button" className="selection-attach-close" aria-label="关闭已有词条选择" onClick={() => setSelectionAttachOpen(false)}>×</button></div>
+              {selectionLookup?.status === "ok" && <p className="selection-attach-note">查词结果不会覆盖已有词条信息。</p>}
               <input autoFocus aria-label="搜索已有词条" placeholder="搜索词条、lemma、释义或标签" value={selectionAttachSearch} onChange={(event) => setSelectionAttachSearch(event.target.value)} />
               <div className="selection-attach-list" aria-live="polite">
                 {selectionAttachLoading && <span className="selection-attach-status">搜索中…</span>}

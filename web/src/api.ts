@@ -162,7 +162,7 @@ export async function createUserAnnotation(payload: Record<string, unknown>): Pr
   return checked(await fetch("/api/annotations/user", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })).then((r) => r.json());
 }
 
-export async function createVocabularyFromSelection(payload: { term: string; selection: SelectionState; vocabulary_id?: string; idempotency_key: string }): Promise<{ entry: VocabularyEntry; created: boolean; replayed: boolean; attached?: boolean; occurrence_created?: boolean }> {
+export async function createVocabularyFromSelection(payload: { term: string; lemma?: string | null; entry_type?: "word" | "phrase"; definition?: string | null; part_of_speech?: string | null; selection: SelectionState; vocabulary_id?: string; idempotency_key: string }): Promise<{ entry: VocabularyEntry; created: boolean; replayed: boolean; attached?: boolean; occurrence_created?: boolean }> {
   return checked(await fetch("/api/vocabulary/from-selection", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })).then((r) => r.json());
 }
 

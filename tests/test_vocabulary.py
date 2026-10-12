@@ -49,6 +49,55 @@ def test_vocabulary_idempotency_and_selection_contract(client: TestClient, sessi
     assert conflict.status_code == 409
 
 
+def test_confirmed_lookup_metadata_is_saved_and_attach_does_not_overwrite_entry(
+    client: TestClient,
+    session: dict[str, str],
+):
+    selection = state_payload(session, event_id=str(uuid4()))["selection"]
+    created = client.post(
+        "/api/vocabulary/from-selection",
+        json={
+            "term": "traces",
+            "lemma": "trace",
+            "entry_type": "word",
+            "part_of_speech": "noun",
+            "definition": "a confirmed context definition",
+            "selection": selection,
+            "idempotency_key": "lookup-save-contract-key",
+        },
+    )
+
+    assert created.status_code == 201
+    entry = created.json()["entry"]
+    assert entry["term"] == "traces"
+    assert entry["lemma"] == "trace"
+    assert entry["part_of_speech"] == "noun"
+    assert entry["definition"] == "a confirmed context definition"
+    assert created.json()["occurrence"]["surface_form"] == "Selected passage"
+
+    attached_selection = {**selection, "exact_text": "tracing"}
+    attached = client.post(
+        "/api/vocabulary/from-selection",
+        json={
+            "term": "tracing",
+            "lemma": "should-not-overwrite",
+            "part_of_speech": "verb",
+            "definition": "ignored while attaching",
+            "vocabulary_id": entry["vocabulary_id"],
+            "selection": attached_selection,
+            "idempotency_key": "lookup-attach-contract-key",
+        },
+    )
+
+    assert attached.status_code == 201
+    detail = client.get(f"/api/vocabulary/{entry['vocabulary_id']}").json()
+    assert detail["entry"]["term"] == "traces"
+    assert detail["entry"]["lemma"] == "trace"
+    assert detail["entry"]["part_of_speech"] == "noun"
+    assert detail["entry"]["definition"] == "a confirmed context definition"
+    assert [item["surface_form"] for item in detail["occurrences"]] == ["Selected passage", "tracing"]
+
+
 def test_vocabulary_rejects_unpaired_source(client: TestClient):
     response = client.post("/api/vocabulary", json={"term": "word", "source_paper_id": str(uuid4()), "idempotency_key": "source-key-123"})
     assert response.status_code == 400
