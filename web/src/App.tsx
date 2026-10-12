@@ -40,7 +40,7 @@ import {
 } from "./api";
 import { openReadingTask as openReadingTaskApi, type ReadingTaskDetail } from "./readingApi";
 import { ReadingTaskPanel } from "./ReadingTaskPanel";
-import { listVocabulary as listVocabularyEntries, type VocabularyEntry as VocabularyListEntry } from "./vocabularyApi";
+import { listVocabulary as listVocabularyEntries, lookupVocabulary, type VocabularyEntry as VocabularyListEntry, type VocabularyLookupOutput, type VocabularyLookupSource } from "./vocabularyApi";
 
 GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -91,6 +91,11 @@ const READING_MODE = new URLSearchParams(window.location.search).get("mode") ===
 
 function normalizeText(value: string): string {
   return value.replace(/\s+/g, " ").trim();
+}
+
+function lookupSourceLabel(source: VocabularyLookupSource): string {
+  if (source.provider === "wordnet") return source.version ? `WordNet ${source.version}` : "WordNet";
+  return source.version ? `${source.provider} ${source.version}` : source.provider;
 }
 
 function bounded(value: number): number {
@@ -527,6 +532,9 @@ export function App() {
   const [selectionAttachSearch, setSelectionAttachSearch] = useState("");
   const [selectionAttachEntries, setSelectionAttachEntries] = useState<VocabularyListEntry[]>([]);
   const [selectionAttachLoading, setSelectionAttachLoading] = useState(false);
+  const [selectionLookup, setSelectionLookup] = useState<VocabularyLookupOutput | null>(null);
+  const [selectionLookupLoading, setSelectionLookupLoading] = useState(false);
+  const [selectionLookupError, setSelectionLookupError] = useState<string | null>(null);
   const [selectionComposerStyle, setSelectionComposerStyle] = useState<UserAnnotationStyle>(() => {
     try {
       const stored = localStorage.getItem(LAST_USER_ANNOTATION_STYLE);
@@ -586,6 +594,8 @@ export function App() {
   const headerOperatingRef = useRef(false);
   const selectionReleaseTimerRef = useRef<number | null>(null);
   const selectionPreviewFrameRef = useRef<number | null>(null);
+  const selectionLookupRequestRef = useRef(0);
+  const selectionLookupAbortRef = useRef<AbortController | null>(null);
   const selectionPromptOpenRef = useRef(false);
   const selectionComposerOpenRef = useRef(false);
   const toolbarReleaseTimerRef = useRef<number | null>(null);
@@ -614,6 +624,15 @@ export function App() {
       selectionPreviewFrameRef.current = null;
     }
     setSelectionPreviewQuads([]);
+  }, []);
+
+  const clearSelectionLookup = useCallback(() => {
+    selectionLookupRequestRef.current += 1;
+    selectionLookupAbortRef.current?.abort();
+    selectionLookupAbortRef.current = null;
+    setSelectionLookup(null);
+    setSelectionLookupLoading(false);
+    setSelectionLookupError(null);
   }, []);
 
   const overlayNode = useCallback((kind: OverlayKind) => kind === "composer" ? selectionComposerRef.current : kind === "annotation" ? cardRef.current : kind === "sticky" ? stickyComposerRef.current : summaryComposerRef.current, []);
@@ -1026,6 +1045,7 @@ export function App() {
     if (open && selectionComposerOpenRef.current) {
       selectionComposerOpenRef.current = false;
       selectionPromptOpenRef.current = false;
+      clearSelectionLookup();
       setSelectionComposerDraft(null);
       setSelectionComposerNote("");
       setSelectionVocabularyKey("");
@@ -1034,7 +1054,7 @@ export function App() {
     annotationCardOpenRef.current = open;
     setAnnotationCardOpen(open);
     if (open) setToolbarSlim(false);
-  }, [clearSelectionPreview]);
+  }, [clearSelectionLookup, clearSelectionPreview]);
 
   useEffect(() => {
     if (!compact) { updateDrawerOpen(false); setHeaderCompact(false); }
@@ -1457,6 +1477,7 @@ export function App() {
     if (selectionComposerDraft) {
       selectionComposerOpenRef.current = false;
       selectionPromptOpenRef.current = false;
+      clearSelectionLookup();
       setSelectionComposerDraft(null);
       setSelectionComposerNote("");
       clearSelectionPreview();
@@ -1474,7 +1495,7 @@ export function App() {
       updateAnnotationCardOpen(false);
     }
     return true;
-  }, [activeAnnotation, annotationCardOpen, annotationEditNote, clearSelectionPreview, selectionComposerDraft, selectionComposerNote, stickyComposerDraft, stickyComposerStyle, stickyComposerText, summaryComposerDraft, summaryComposerText, updateAnnotationCardOpen]);
+  }, [activeAnnotation, annotationCardOpen, annotationEditNote, clearSelectionLookup, clearSelectionPreview, selectionComposerDraft, selectionComposerNote, stickyComposerDraft, stickyComposerStyle, stickyComposerText, summaryComposerDraft, summaryComposerText, updateAnnotationCardOpen]);
 
   const handleAnnotationCardDoubleClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     if ((!annotationCardOpen && !selectionComposerDraft && !summaryComposerDraft) || stickyPlacementMode || summaryPlacementMode || isGrabScrolling || grabRef.current) return;
@@ -1710,13 +1731,14 @@ export function App() {
   const closeSelectionComposer = useCallback(() => {
     selectionComposerOpenRef.current = false;
     selectionPromptOpenRef.current = false;
+    clearSelectionLookup();
     setSelectionComposerDraft(null);
     setSelectionComposerNote("");
     setSelectionVocabularyKey("");
     setSelectionAttachOpen(false);
     setSelectionAttachSearch("");
     setSelectionAttachEntries([]);
-  }, []);
+  }, [clearSelectionLookup]);
 
   const discardSelectionComposer = useCallback(() => {
     closeSelectionComposer();
@@ -1755,6 +1777,33 @@ export function App() {
       setVocabularySaving(false);
     }
   }, [selectionComposerDraft, selectionVocabularyKey, vocabularySaving]);
+
+  const lookupSelection = useCallback(async () => {
+    const draft = selectionComposerDraft;
+    const text = draft?.exact_text.trim();
+    if (!draft || !text || selectionLookupLoading) return;
+    selectionLookupAbortRef.current?.abort();
+    const controller = new AbortController();
+    const requestId = selectionLookupRequestRef.current + 1;
+    selectionLookupRequestRef.current = requestId;
+    selectionLookupAbortRef.current = controller;
+    setSelectionLookup(null);
+    setSelectionLookupError(null);
+    setSelectionLookupLoading(true);
+    try {
+      const result = await lookupVocabulary(text, "en", null, controller.signal);
+      if (controller.signal.aborted || requestId !== selectionLookupRequestRef.current || !selectionComposerOpenRef.current) return;
+      setSelectionLookup(result);
+    } catch (error) {
+      if (controller.signal.aborted || requestId !== selectionLookupRequestRef.current || !selectionComposerOpenRef.current) return;
+      setSelectionLookupError(error instanceof Error ? "查词暂时不可用，请稍后重试" : "查词失败，请稍后重试");
+    } finally {
+      if (requestId === selectionLookupRequestRef.current) {
+        selectionLookupAbortRef.current = null;
+        setSelectionLookupLoading(false);
+      }
+    }
+  }, [selectionComposerDraft, selectionLookupLoading]);
 
   const openSelectionAttach = useCallback(() => {
     setSelectionAttachSearch(selectionComposerDraft?.exact_text ?? "");
@@ -2011,11 +2060,12 @@ export function App() {
     scheduleState(pageNumber, text, frozenDraft);
     selectionPromptOpenRef.current = true;
     selectionComposerOpenRef.current = true;
+    clearSelectionLookup();
     setSelectionComposerDraft(frozenDraft);
     setSelectionComposerNote("");
     setSelectionVocabularyKey(crypto.randomUUID());
     selectionVocabularyRevisionRef.current = Math.max(1, revisionRef.current + 1);
-  }, [activeAnnotationId, annotationEditNote, annotations, pageNumber, paper, scheduleState, sessionId, updateAnnotationCardOpen]);
+  }, [activeAnnotationId, annotationEditNote, annotations, clearSelectionLookup, pageNumber, paper, scheduleState, sessionId, updateAnnotationCardOpen]);
 
   async function openPaper(nextPaper: Paper) {
     const session = await createSession(nextPaper.paper_id);
@@ -2149,6 +2199,37 @@ export function App() {
               <button type="button" className="selection-composer-close" aria-label="关闭批注编辑器" onClick={discardSelectionComposer}>×</button>
             </div>
             <span className="selection-composer-source">原文第 {selectionComposerDraft.page_number} 页 · 选区已冻结</span>
+            {(selectionLookupLoading || selectionLookupError || selectionLookup) && <section className="selection-lookup-panel" data-testid="selection-lookup-panel" aria-live="polite">
+              <div className="selection-lookup-heading">
+                <strong>查词结果</strong>
+                <span>只读建议</span>
+              </div>
+              <p className="selection-lookup-surface"><span>选中原文</span>{selectionComposerDraft.exact_text}</p>
+              {selectionLookupLoading && <p className="selection-lookup-status" data-testid="selection-lookup-loading">正在查词…</p>}
+              {selectionLookupError && <p className="selection-lookup-status is-error" data-testid="selection-lookup-error">{selectionLookupError}</p>}
+              {selectionLookup?.status === "ok" && <div className="selection-lookup-candidates" data-testid="selection-lookup-candidates">
+                {selectionLookup.candidates.map((candidate, index) => <article className="selection-lookup-candidate" data-testid="selection-lookup-candidate" key={`${candidate.lemma}-${candidate.part_of_speech}-${index}`}>
+                  <div className="selection-lookup-candidate-heading">
+                    <strong>{candidate.lemma}</strong>
+                    <span>{candidate.part_of_speech}</span>
+                  </div>
+                  {candidate.variants.length > 0 && <p className="selection-lookup-variants">词形：{candidate.variants.join("、")}</p>}
+                  {candidate.definitions.length > 0 && <ol className="selection-lookup-definitions">
+                    {candidate.definitions.map((definition, definitionIndex) => <li key={`${definition.text}-${definitionIndex}`}>
+                      <span>{definition.text}</span>
+                      <small className="selection-lookup-source" data-testid="selection-lookup-source">{lookupSourceLabel(definition.source)}</small>
+                    </li>)}
+                  </ol>}
+                </article>)}
+              </div>}
+              {selectionLookup?.status === "no_result" && <p className="selection-lookup-status" data-testid="selection-lookup-no-result">未找到可靠的词典结果。</p>}
+              {selectionLookup?.status === "unsupported_phrase" && <p className="selection-lookup-status" data-testid="selection-lookup-unsupported">当前本地词典暂不支持这个短语的完整查询。</p>}
+              {selectionLookup?.status === "unavailable" && <p className="selection-lookup-status" data-testid="selection-lookup-unavailable">本地词典暂时不可用；选区和其他批注操作不受影响。</p>}
+              {selectionLookup?.status === "ok" && selectionLookup.translations.length > 0 && <div className="selection-lookup-translations">
+                <span>翻译建议</span>
+                {selectionLookup.translations.map((translation, index) => <p key={`${translation.text}-${index}`}>{translation.text} · {lookupSourceLabel(translation.source)}</p>)}
+              </div>}
+            </section>}
             <div className="annotation-style-picker" role="group" aria-label="批注颜色层级">
               {(["primary", "secondary", "tertiary"] as const).map((style) => <button
                 type="button"
@@ -2171,6 +2252,7 @@ export function App() {
             <div className="selection-composer-actions">
               <button type="button" disabled={!selectionComposerNote.trim()} onClick={() => void saveSelectionComposerNote()}>保存笔记</button>
               <button type="button" onClick={discardSelectionComposer}>仅保存选区</button>
+              <button type="button" className="selection-vocabulary-action secondary selection-lookup-action" disabled={!selectionComposerDraft.exact_text.trim() || selectionLookupLoading} data-testid="selection-lookup" onClick={() => void lookupSelection()}>{selectionLookupLoading ? "查词中…" : "查词"}</button>
               <button type="button" className="selection-vocabulary-action" disabled={vocabularySaving} data-testid="selection-add-vocabulary" onClick={() => void addSelectionToVocabulary()}>{vocabularySaving ? "加入中…" : "加入词汇"}</button>
               <button type="button" className="selection-vocabulary-action secondary" disabled={vocabularySaving} data-testid="selection-attach-vocabulary" aria-expanded={selectionAttachOpen} onClick={openSelectionAttach}>加入已有词条</button>
               <button type="button" onClick={() => resetOverlaySize("composer")}>恢复默认大小</button>
