@@ -107,7 +107,7 @@ def test_reading_submit_requires_all_answers(client: TestClient, uploaded: dict[
     assert client.post(f"/api/reading/tasks/{task_id}/submission/submit", json={"revision": 1, "client_event_id": str(uuid4())}).status_code == 422
 
 
-def test_v8_to_v10_migration_preserves_existing_rows(tmp_path: Path):
+def test_v8_to_v11_migration_preserves_existing_rows(tmp_path: Path):
     database = tmp_path / "existing.sqlite3"
     connection = sqlite3.connect(database)
     connection.execute("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)")
@@ -117,7 +117,7 @@ def test_v8_to_v10_migration_preserves_existing_rows(tmp_path: Path):
     connection.execute("INSERT INTO papers(paper_id, content_sha256, original_filename, storage_key, size_bytes, mime_type, page_count, created_at) VALUES ('paper', 'hash', 'paper.pdf', 'paper.pdf', 1, 'application/pdf', 1, 'old')")
     connection.commit()
     migrate(connection)
-    assert connection.execute("SELECT max(version) FROM schema_migrations").fetchone()[0] == 10
+    assert connection.execute("SELECT max(version) FROM schema_migrations").fetchone()[0] == 11
     assert connection.execute("SELECT original_filename FROM papers WHERE paper_id='paper'").fetchone()[0] == "paper.pdf"
     assert connection.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='reading_tasks'").fetchone() is not None
     assert connection.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='summary_notes'").fetchone() is not None

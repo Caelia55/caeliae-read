@@ -289,6 +289,13 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
         );
         """,
     ),
+    (
+        11,
+        """
+        ALTER TABLE summary_notes ADD COLUMN normalized_x REAL
+            CHECK (normalized_x IS NULL OR (normalized_x >= 0 AND normalized_x <= 1));
+        """,
+    ),
 )
 
 

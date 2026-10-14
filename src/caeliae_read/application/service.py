@@ -1152,20 +1152,28 @@ class CaeliaeReadService:
         return [note.public_dict() for note in self.repository.list_summary_notes(target, page_number)]
 
     @staticmethod
-    def _summary_note_payload(payload: dict[str, object]) -> tuple[str, int, float, str]:
+    def _summary_note_payload(payload: dict[str, object]) -> tuple[str, int, float, float | None, str]:
         paper_id = require_uuid(str(payload.get("paper_id")), "paper_id")
         try:
             page_number = int(payload.get("page_number", 0))
             normalized_y = float(payload.get("normalized_y"))
+            raw_normalized_x = payload.get("normalized_x")
+            normalized_x = None if raw_normalized_x is None else float(raw_normalized_x)
         except (TypeError, ValueError) as error:
             raise ValidationError("summary note page and position are invalid") from error
         text = str(payload.get("text") or "").strip()
-        if page_number < 1 or not 0 <= normalized_y <= 1 or not text or len(text) > 2_000:
+        if (
+            page_number < 1
+            or not 0 <= normalized_y <= 1
+            or (normalized_x is not None and not 0 <= normalized_x <= 1)
+            or not text
+            or len(text) > 2_000
+        ):
             raise ValidationError("summary note page, position, or text is invalid")
-        return paper_id, page_number, normalized_y, text
+        return paper_id, page_number, normalized_y, normalized_x, text
 
     def create_summary_note(self, payload: dict[str, object]) -> dict[str, object]:
-        paper_id, page_number, normalized_y, text = self._summary_note_payload(payload)
+        paper_id, page_number, normalized_y, normalized_x, text = self._summary_note_payload(payload)
         paper = self.get_paper(paper_id)
         if page_number > paper.page_count:
             raise ValidationError("summary note page is outside the paper")
@@ -1175,6 +1183,7 @@ class CaeliaeReadService:
                 "paper_id": paper_id,
                 "page_number": page_number,
                 "normalized_y": normalized_y,
+                "normalized_x": normalized_x,
                 "text": text,
             },
             utc_now(),

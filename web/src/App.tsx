@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import {
   GlobalWorkerOptions,
   Util,
@@ -53,12 +53,12 @@ const DESKTOP_MIN_READER_WIDTH = 680;
 const DESKTOP_LAYOUT_WIDTH = DESKTOP_SIDEBAR_WIDTH + DESKTOP_MIN_READER_WIDTH;
 const DESKTOP_RESTORE_MARGIN = 64;
 const STICKY_PLACEMENT_MESSAGE = "点击页面空白处放置便签 · Esc 取消";
-const SUMMARY_PLACEMENT_MESSAGE = "点击页面左侧空白处添加大意 · Esc 取消";
+const SUMMARY_PLACEMENT_MESSAGE = "点击页面空白处放置大意 · Esc 取消";
 
 type SelectionDraft = Omit<SelectionState, "revision">;
 type LookupEditDraft = { lemma: string; part_of_speech: string; definition: string };
 type StickyNoteDraft = { x: number; y: number; text: string; style_key: UserAnnotationStyle; id?: string };
-type SummaryNoteDraft = { normalized_y: number; text: string; id?: string };
+type SummaryNoteDraft = { normalized_y: number; normalized_x: number | null; text: string; id?: string };
 type StickyDragState = {
   pointerId: number;
   noteId: string;
@@ -196,6 +196,11 @@ function normalizedStickyPoint(pageRect: DOMRect, clientX: number, clientY: numb
 function normalizedPageY(pageRect: DOMRect, clientY: number): number | null {
   if (pageRect.height <= 0) return null;
   return bounded((clientY - pageRect.top) / pageRect.height);
+}
+
+function normalizedPageX(pageRect: DOMRect, clientX: number): number | null {
+  if (pageRect.width <= 0) return null;
+  return bounded((clientX - pageRect.left) / pageRect.width);
 }
 
 function boundaryOffsetInSpan(container: Node, offset: number, span: HTMLSpanElement, start: boolean): number {
@@ -898,8 +903,10 @@ export function App() {
     if (!pdfPageRef.current || !paper) return false;
     const pageRect = pdfPageRef.current.getBoundingClientRect();
     const normalizedY = normalizedPageY(pageRect, clientY);
-    if (normalizedY === null) return false;
-    setSummaryComposerDraft({ normalized_y: normalizedY, text: "" });
+    const withinPage = clientX >= pageRect.left && clientX <= pageRect.right;
+    const normalizedX = withinPage ? normalizedPageX(pageRect, clientX) : null;
+    if (normalizedY === null || (withinPage && normalizedX === null) || clientX > pageRect.right) return false;
+    setSummaryComposerDraft({ normalized_y: normalizedY, normalized_x: normalizedX, text: "" });
     setSummaryComposerText("");
     setSummaryPlacementMode(false);
     setMessage("大意草稿已创建 · 输入内容后保存");
@@ -1977,7 +1984,7 @@ export function App() {
         const result = await updateSummaryNote(draft.id, { text });
         setSummaryNotes((items) => items.map((item) => item.summary_note_id === draft.id ? result.summary_note : item));
       } else {
-        const result = await createSummaryNote({ paper_id: paper.paper_id, page_number: pageNumber, normalized_y: draft.normalized_y, text });
+        const result = await createSummaryNote({ paper_id: paper.paper_id, page_number: pageNumber, normalized_y: draft.normalized_y, normalized_x: draft.normalized_x, text });
         setSummaryNotes((items) => [...items, result.summary_note]);
       }
       closeSummaryComposer();
@@ -1988,7 +1995,7 @@ export function App() {
   }, [closeSummaryComposer, pageNumber, paper, summaryComposerDraft, summaryComposerText]);
 
   const editSummaryNote = useCallback((note: SummaryNote) => {
-    setSummaryComposerDraft({ id: note.summary_note_id, normalized_y: note.normalized_y, text: note.text });
+    setSummaryComposerDraft({ id: note.summary_note_id, normalized_y: note.normalized_y, normalized_x: note.normalized_x, text: note.text });
     setSummaryComposerText(note.text);
   }, []);
 
@@ -2567,12 +2574,14 @@ export function App() {
                 </div>
                  <div className="summary-note-layer" aria-label="页面大意">
                    {summaryNotes.filter((note) => note.page_number === pageNumber).map((note) => <button
-                     className={`summary-note-marker${annotationIndexFocus === note.summary_note_id ? " is-index-focused" : ""}`}
+                     className={`summary-note-marker${note.normalized_x !== null ? " summary-note-marker-spatial" : ""}${annotationIndexFocus === note.summary_note_id ? " is-index-focused" : ""}`}
                      key={note.summary_note_id}
                      type="button"
                      aria-label={`大意：${note.text}`}
                      title={note.text}
-                     style={{ top: `${note.normalized_y * 100}%` }}
+                     style={(note.normalized_x === null
+                       ? { top: `${note.normalized_y * 100}%` }
+                       : { "--summary-note-x": `${note.normalized_x * 100}%`, "--summary-note-y": `${note.normalized_y * 100}%` }) as CSSProperties}
                      ref={(node) => { if (node) summaryMarkerRefs.current.set(note.summary_note_id, node); else summaryMarkerRefs.current.delete(note.summary_note_id); }}
                      onClick={(event) => { event.stopPropagation(); editSummaryNote(note); }}
                    >

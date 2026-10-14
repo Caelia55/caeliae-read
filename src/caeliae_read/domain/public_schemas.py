@@ -65,6 +65,7 @@ class SummaryNoteOutput(PublicModel):
     paper_id: UUID
     page_number: int = Field(ge=1)
     normalized_y: float = Field(ge=0, le=1)
+    normalized_x: float | None = Field(default=None, ge=0, le=1)
     text: str = Field(min_length=1, max_length=2_000)
     created_at: str
     updated_at: str

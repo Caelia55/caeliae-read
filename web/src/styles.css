@@ -410,6 +410,7 @@ h1 { margin: 0; font-family: Georgia, "Times New Roman", serif; font-size: clamp
 .sticky-style-tertiary { color: var(--annotation-user-tertiary-color); border-color: var(--annotation-user-tertiary-color); }
 .summary-note-layer { position: absolute; inset: 0; z-index: 4; overflow: visible; pointer-events: none; }
 .summary-note-marker { position: absolute; left: 6px; display: flex; align-items: baseline; gap: 6px; width: max-content; max-width: 136px; min-height: 25px; margin: 0; padding: 4px 8px; border: 1px solid rgba(93,106,105,.28); border-radius: 999px; background: rgba(246,249,246,.94); color: #4f6661; box-shadow: 0 3px 10px rgba(39,35,29,.12); pointer-events: auto; transform: translateY(-50%); cursor: pointer; text-align: left; }
+.summary-note-marker-spatial { left: max(6px, min(var(--summary-note-x), calc(100% - 136px))); top: max(13px, min(var(--summary-note-y), calc(100% - 13px))); }
 .summary-note-marker:hover, .summary-note-marker:focus-visible, .summary-note-marker.is-index-focused { border-color: rgba(79,102,97,.68); background: #fffdf8; box-shadow: 0 0 0 3px rgba(79,102,97,.13), 0 4px 12px rgba(39,35,29,.16); outline: none; }
 .summary-note-label { flex: 0 0 auto; font-size: 11px; font-weight: 700; white-space: nowrap; }
 .summary-note-preview { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #6e7874; font-size: 11px; }
@@ -526,6 +527,7 @@ h1 { margin: 0; font-family: Georgia, "Times New Roman", serif; font-size: clamp
 
 @media (max-width: 760px) {
   .summary-note-marker { left: 6px; max-width: min(116px, calc(100vw - 32px)); padding: 4px 7px; transform: translateY(-50%); }
+  .summary-note-marker-spatial { left: max(6px, min(var(--summary-note-x), calc(100% - 116px))); top: max(13px, min(var(--summary-note-y), calc(100% - 13px))); }
   .summary-note-preview { max-width: 68px; }
 }
 

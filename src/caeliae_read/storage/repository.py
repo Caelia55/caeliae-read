@@ -427,6 +427,7 @@ class CaeliaeReadRepository:
             paper_id=row["paper_id"],
             page_number=row["page_number"],
             normalized_y=row["normalized_y"],
+            normalized_x=row["normalized_x"],
             text=row["text"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
@@ -453,12 +454,13 @@ class CaeliaeReadRepository:
     def insert_summary_note(self, note: dict[str, Any], created_at: str) -> SummaryNote:
         with self.connection() as connection:
             connection.execute(
-                "INSERT INTO summary_notes(summary_note_id,paper_id,page_number,normalized_y,text,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+                "INSERT INTO summary_notes(summary_note_id,paper_id,page_number,normalized_y,normalized_x,text,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
                 (
                     note["summary_note_id"],
                     note["paper_id"],
                     note["page_number"],
                     note["normalized_y"],
+                    note.get("normalized_x"),
                     note["text"],
                     created_at,
                     created_at,

@@ -14,6 +14,7 @@ class SummaryNoteCreateInput(StrictModel):
     paper_id: UUID
     page_number: Annotated[int, Field(ge=1)]
     normalized_y: Annotated[float, Field(ge=0, le=1)]
+    normalized_x: float | None = Field(default=None, ge=0, le=1)
     text: Annotated[str, Field(min_length=1, max_length=2_000)]
 
     @field_validator("text")

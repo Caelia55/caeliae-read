@@ -106,6 +106,7 @@ export interface SummaryNote {
   paper_id: string;
   page_number: number;
   normalized_y: number;
+  normalized_x: number | null;
   text: string;
   created_at: string;
   updated_at: string;
@@ -204,7 +205,7 @@ export async function listSummaryNotes(paperId: string, pageNumber?: number): Pr
   return result.summary_notes;
 }
 
-export async function createSummaryNote(payload: { paper_id: string; page_number: number; normalized_y: number; text: string }): Promise<{ summary_note: SummaryNote }> {
+export async function createSummaryNote(payload: { paper_id: string; page_number: number; normalized_y: number; normalized_x?: number | null; text: string }): Promise<{ summary_note: SummaryNote }> {
   return checked(await fetch("/api/summary-notes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })).then((r) => r.json());
 }
 

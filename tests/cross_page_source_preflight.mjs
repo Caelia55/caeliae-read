@@ -99,9 +99,19 @@ try {
     await page.locator('.pdf-page canvas[aria-label="论文第 2 页"]').waitFor();
   }
   assert.equal((await (await page.request.delete(`${baseURL}/api/annotations/${userId}?session_id=${session}`)).json()).deleted, true);
+  let lowerPageSaved = false;
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const context = await page.request.get(`${baseURL}/api/sessions/${session}/context`);
+    if (context.ok() && (await context.json()).checkpoint.page_number === 2) {
+      lowerPageSaved = true;
+      break;
+    }
+    await page.waitForTimeout(250);
+  }
+  assert(lowerPageSaved, "isolated page-2 checkpoint not saved before lower annotation");
 
   const lower = {
-    ...assistant, page_number: 2, normalized_quads: [{ x: .2, y: .92, width: .25, height: .03 }],
+    ...assistant, session_id: session, page_number: 2, normalized_quads: [{ x: .2, y: .92, width: .25, height: .03 }],
     note: "isolated lower-page assistant remember", remember: true, idempotency_key: crypto.randomUUID(),
   };
   const lowerResponse = await page.request.post(`${baseURL}/api/annotations`, { data: lower });
@@ -113,6 +123,7 @@ try {
     await page.getByRole("button", { name: "下一页" }).click();
   }
   await page.locator('.pdf-page canvas[aria-label="论文第 2 页"]').waitFor();
+  await page.waitForTimeout(500);
   for (const zoom of [125, 200]) {
     if (await page.locator('.pdf-page canvas[aria-label="论文第 2 页"]').count() === 0) {
       await page.getByRole("button", { name: "下一页" }).click();

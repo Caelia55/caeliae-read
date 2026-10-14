@@ -40,7 +40,7 @@ try {
   const listed = await page.request.get(`${baseURL}/api/summary-notes`, { params: { paper_id: paperId } });
   assert(listed.ok());
   const created = (await listed.json()).summary_notes.find((note) => note.text.startsWith("This paragraph"));
-  assert(created && created.page_number === 1 && Math.abs(created.normalized_y - targetY) < .03, "summary note did not persist page-relative y");
+  assert(created && created.page_number === 1 && created.normalized_x === null && Math.abs(created.normalized_y - targetY) < .03, "gutter summary note did not preserve legacy x=null placement");
 
   await marker.click();
   await page.getByRole("textbox", { name: "大意内容" }).fill("Updated section summary.");
@@ -92,7 +92,7 @@ try {
         const target = document.elementFromPoint(x, y);
         if (!target || target.closest(".text-layer span")) continue;
         const isBlankPageTarget = target === pageNode || target === canvas || target === textLayer || target.closest(".text-layer, .selection-preview-layer, .annotation-layer, .sticky-layer, .summary-note-layer");
-        if (isBlankPageTarget) return { x, y, normalizedY: yRatio, target: target.className || target.tagName };
+        if (isBlankPageTarget) return { x, y, normalizedX: xRatio, normalizedY: yRatio, target: target.className || target.tagName };
       }
     }
     return null;
@@ -112,11 +112,58 @@ try {
   await blankMarker.waitFor();
   const blankListed = await page.request.get(`${baseURL}/api/summary-notes`, { params: { paper_id: paperId } });
   const blankCreated = (await blankListed.json()).summary_notes.find((note) => note.text === "Blank page area summary.");
-  assert(blankCreated && Math.abs(blankCreated.normalized_y - blankPoint.normalizedY) < .05, "blank page placement did not persist page-relative y");
+  assert(blankCreated && blankCreated.normalized_x !== null && Math.abs(blankCreated.normalized_x - blankPoint.normalizedX) < .08 && Math.abs(blankCreated.normalized_y - blankPoint.normalizedY) < .05, "blank page placement did not persist page-relative x/y");
+
+  const secondBlankPoint = await page.evaluate(() => {
+    const pageNode = document.querySelector(".pdf-page");
+    const textLayer = document.querySelector(".text-layer");
+    const canvas = document.querySelector(".pdf-page canvas");
+    if (!pageNode || !textLayer || !(canvas instanceof HTMLCanvasElement)) return null;
+    const rect = pageNode.getBoundingClientRect();
+    for (const yRatio of [.34, .52, .7, .88]) {
+      for (const xRatio of [.68, .8, .92]) {
+        const x = rect.left + rect.width * xRatio;
+        const y = rect.top + rect.height * yRatio;
+        const target = document.elementFromPoint(x, y);
+        if (!target || target.closest(".text-layer span, .summary-note-marker, .sticky-note-marker, .annotation-mark")) continue;
+        const isBlankPageTarget = target === pageNode || target === canvas || target === textLayer || target.closest(".text-layer, .selection-preview-layer, .annotation-layer, .sticky-layer, .summary-note-layer");
+        if (isBlankPageTarget) return { x, y, normalizedX: xRatio, normalizedY: yRatio };
+      }
+    }
+    return null;
+  });
+  assert(secondBlankPoint, "No second distinct blank page point was measurable");
+  await summaryTool.click();
+  await page.locator(".summary-placement-hint").waitFor();
+  await page.mouse.click(secondBlankPoint.x, secondBlankPoint.y);
+  await page.getByRole("textbox", { name: "大意内容" }).waitFor();
+  await page.getByRole("textbox", { name: "大意内容" }).fill("Second spatial summary.");
+  await page.getByRole("button", { name: "保存大意" }).click();
+  const secondMarker = page.locator('.summary-note-marker[aria-label="大意：Second spatial summary."]');
+  await secondMarker.waitFor();
+  const spatialListed = await page.request.get(`${baseURL}/api/summary-notes`, { params: { paper_id: paperId } });
+  const spatialNotes = (await spatialListed.json()).summary_notes;
+  const secondCreated = spatialNotes.find((note) => note.text === "Second spatial summary.");
+  assert(secondCreated && secondCreated.normalized_x !== null && Math.abs(secondCreated.normalized_x - secondBlankPoint.normalizedX) < .08 && Math.abs(secondCreated.normalized_y - secondBlankPoint.normalizedY) < .05, "second spatial placement did not persist page-relative x/y");
+  assert(Math.abs(blankCreated.normalized_x - secondCreated.normalized_x) > .2, "distinct blank clicks did not produce distinct normalized x positions");
+  const markerGeometry = await page.locator(".summary-note-marker").evaluateAll((nodes) => nodes.map((node) => ({ label: node.getAttribute("aria-label"), left: node.getBoundingClientRect().left, top: node.getBoundingClientRect().top })));
+  const firstSpatialGeometry = markerGeometry.find((item) => item.label === "大意：Blank page area summary.");
+  const secondSpatialGeometry = markerGeometry.find((item) => item.label === "大意：Second spatial summary.");
+  assert(firstSpatialGeometry && secondSpatialGeometry && Math.abs(firstSpatialGeometry.left - secondSpatialGeometry.left) > 20, "spatial markers did not render at visibly distinct x positions");
+  await secondMarker.focus();
+  await page.keyboard.press("Enter");
+  await page.getByRole("textbox", { name: "大意内容" }).waitFor();
+  await page.keyboard.press("Escape");
+  assert.equal(await page.locator(".summary-note-composer").count(), 0, "Escape did not close spatial Summary editor");
   await blankMarker.click();
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "删除" }).click();
   await page.waitForFunction(() => !document.querySelector('.summary-note-marker[aria-label="大意：Blank page area summary."]'));
+
+  await secondMarker.click();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "删除" }).click();
+  await page.waitForFunction(() => !document.querySelector('.summary-note-marker[aria-label="大意：Second spatial summary."]'));
 
   await editedMarker.click();
   page.once("dialog", (dialog) => dialog.accept());
@@ -131,6 +178,8 @@ try {
     created: true,
     gutterPlacement: true,
     blankPagePlacement: true,
+    spatialPositionsDistinct: true,
+    spatialKeyboardActivation: true,
     edited: true,
     indexFilterAndJump: true,
     normalizedY: created.normalized_y,

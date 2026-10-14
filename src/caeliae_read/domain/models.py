@@ -114,6 +114,7 @@ class SummaryNote:
     paper_id: str
     page_number: int
     normalized_y: float
+    normalized_x: float | None
     text: str
     created_at: str
     updated_at: str
