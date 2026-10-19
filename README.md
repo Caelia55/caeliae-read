@@ -92,9 +92,10 @@ processes by name or delete the local data directory.
 
 ## Local data and privacy
 
-By default, the service stores data under `data/`, including the compatibility
-database filename `data/coread.sqlite3` and local paper files under
-`data/papers/`. The entire data directory is ignored by Git, as are SQLite
+The formal `start-local.cmd` launcher resolves the repository's `data/` directory
+and passes it explicitly to the API. This preserves the compatibility database
+filename `data/coread.sqlite3` and local paper files under `data/papers/`.
+The entire data directory is ignored by Git, as are SQLite
 WAL/SHM files, local logs, backups, browser state, build output, and temporary
 acceptance artifacts.
 
@@ -108,6 +109,10 @@ $env:CAELIAE_READ_DATA_ROOT = Join-Path $env:TEMP ("caeliae-read-" + [guid]::New
 Remove-Item Env:COREAD_DATA_ROOT -ErrorAction SilentlyContinue
 ```
 
+Ad-hoc API, MCP, and test processes must set `CAELIAE_READ_DATA_ROOT` (or the
+legacy `COREAD_DATA_ROOT`) explicitly. If neither variable is set, the process
+fails closed; it never silently falls back to the repository's `data/` directory.
+
 The `COREAD_*` variables, `coread.sqlite3`, and legacy entry points remain only
 as compatibility surfaces for existing installations. They are not the current
 product name or a second implementation.
@@ -117,6 +122,7 @@ product name or a second implementation.
 Start the local stdio server from another process when MCP access is needed:
 
 ```powershell
+$env:CAELIAE_READ_DATA_ROOT = Join-Path (Get-Location) "data"
 .\.venv\Scripts\python.exe -m caeliae_read.mcp.server
 # Compatibility delegates remain available:
 # .\.venv\Scripts\python.exe -m coread_core.mcp.server

@@ -47,9 +47,40 @@ def _environment(name: str, default: str) -> str:
     return new if new is not None else old if old is not None else default
 
 
-def get_settings() -> Settings:
-    data_root = Path(_environment("DATA_ROOT", str(PROJECT_ROOT / "data"))).resolve()
-    origins = tuple(
+def _data_root() -> Path:
+    new = os.environ.get("CAELIAE_READ_DATA_ROOT")
+    old = os.environ.get("COREAD_DATA_ROOT")
+    if new is not None and old is not None:
+        if not new.strip() or not old.strip():
+            raise RuntimeError(
+                "CAELIAE_READ_DATA_ROOT must be explicitly configured with a non-empty path"
+            )
+        if Path(new).resolve() != Path(old).resolve():
+            raise ValueError(
+                "configuration conflict: CAELIAE_READ_DATA_ROOT and COREAD_DATA_ROOT resolve to different locations"
+            )
+        _report("COREAD_DATA_ROOT is deprecated and ignored; CAELIAE_READ_DATA_ROOT is configured.")
+        return Path(new).resolve()
+    if new is not None:
+        if not new.strip():
+            raise RuntimeError(
+                "CAELIAE_READ_DATA_ROOT must be explicitly configured with a non-empty path"
+            )
+        return Path(new).resolve()
+    if old is not None:
+        if not old.strip():
+            raise RuntimeError(
+                "COREAD_DATA_ROOT must be explicitly configured with a non-empty path"
+            )
+        _report("COREAD_DATA_ROOT is deprecated; use CAELIAE_READ_DATA_ROOT in the next migration version.")
+        return Path(old).resolve()
+    raise RuntimeError(
+        "CAELIAE_READ_DATA_ROOT must be explicitly configured; refusing implicit repo/data fallback"
+    )
+
+
+def get_allowed_origins() -> tuple[str, ...]:
+    return tuple(
         item.strip()
         for item in _environment(
             "ALLOWED_ORIGINS",
@@ -57,6 +88,10 @@ def get_settings() -> Settings:
         ).split(",")
         if item.strip()
     )
+
+
+def get_settings() -> Settings:
+    data_root = _data_root()
     return Settings(
         data_root=data_root,
         database_path=data_root / "coread.sqlite3",
@@ -67,5 +102,5 @@ def get_settings() -> Settings:
         selection_context_chars=int(_environment("SELECTION_CONTEXT_CHARS", "160")),
         api_host=_environment("API_HOST", "127.0.0.1"),
         api_port=int(_environment("API_PORT", "8765")),
-        allowed_origins=origins,
+        allowed_origins=get_allowed_origins(),
     )

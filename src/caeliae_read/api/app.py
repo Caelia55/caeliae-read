@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 import csv
 import io
 import json
@@ -30,7 +31,20 @@ from caeliae_read.application.service import (
     require_uuid,
 )
 from caeliae_read.application.lookup import LookupProvider, VocabularyLookupService, get_lookup_provider
-from caeliae_read.config import PROJECT_ROOT, get_settings
+from caeliae_read.config import PROJECT_ROOT, get_allowed_origins, get_settings
+
+
+class _LazyService:
+    def __init__(self, service: CaeliaeReadService | None):
+        self._service = service
+
+    def resolve(self) -> CaeliaeReadService:
+        if self._service is None:
+            self._service = get_service()
+        return self._service
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self.resolve(), name)
 
 
 def problem(error: CaeliaeReadError) -> HTTPException:
@@ -61,13 +75,23 @@ def create_app(
     service: CaeliaeReadService | None = None,
     lookup_provider: LookupProvider | None = None,
 ) -> FastAPI:
-    settings = get_settings()
-    read_service = service or get_service()
+    read_service = _LazyService(service)
     lookup_service = VocabularyLookupService(lookup_provider or get_lookup_provider())
-    app = FastAPI(title="Caeliae Read", version=__version__, docs_url="/api/docs")
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        read_service.resolve()
+        yield
+
+    app = FastAPI(
+        title="Caeliae Read",
+        version=__version__,
+        docs_url="/api/docs",
+        lifespan=lifespan,
+    )
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=list(settings.allowed_origins),
+        allow_origins=list(get_allowed_origins()),
         allow_credentials=False,
         allow_methods=["GET", "POST", "PUT", "DELETE"],
         allow_headers=["Content-Type"],

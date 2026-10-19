@@ -20,6 +20,7 @@ if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
 if (-not (Test-Path -LiteralPath $reader -PathType Leaf)) {
     throw 'Reader build is missing. Run pnpm build in web/ first.'
 }
+Write-Host "Resolved formal data root: $dataRoot"
 New-Item -ItemType Directory -Path $dataRoot -Force | Out-Null
 
 function Get-ListenerProcesses {
@@ -105,6 +106,7 @@ if ($listeners.Count -gt 0) {
     $quotedRoot = [char]34 + $projectRoot.Replace([string][char]34, '\"') + [char]34
     $startInfo.Arguments = "-m uvicorn caeliae_read.api.app:app --host 127.0.0.1 --port $port --app-dir $quotedRoot"
     $startInfo.EnvironmentVariables['CAELIAE_READ_DATA_ROOT'] = $dataRoot
+    $startInfo.EnvironmentVariables.Remove('COREAD_DATA_ROOT')
     $startInfo.EnvironmentVariables['PYTHONPATH'] = Join-Path $projectRoot 'src'
     $launchedProcess = [System.Diagnostics.Process]::new()
     $launchedProcess.StartInfo = $startInfo
