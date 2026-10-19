@@ -88,7 +88,7 @@ def test_summary_note_paper_delete_cascades(tmp_path: Path, client: TestClient, 
         assert connection.execute("SELECT count(*) FROM summary_notes WHERE summary_note_id=?", (created["summary_note_id"],)).fetchone()[0] == 0
 
 
-def test_v8_to_v11_migration_is_additive_and_preserves_paper(tmp_path: Path):
+def test_v8_to_v12_migration_is_additive_and_preserves_paper(tmp_path: Path):
     database = tmp_path / "existing.sqlite3"
     connection = sqlite3.connect(database)
     connection.execute("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)")
@@ -100,14 +100,14 @@ def test_v8_to_v11_migration_is_additive_and_preserves_paper(tmp_path: Path):
     )
     connection.commit()
     migrate(connection)
-    assert connection.execute("SELECT max(version) FROM schema_migrations").fetchone()[0] == 11
+    assert connection.execute("SELECT max(version) FROM schema_migrations").fetchone()[0] == 12
     assert connection.execute("SELECT original_filename FROM papers WHERE paper_id='paper'").fetchone()[0] == "paper.pdf"
     columns = {row[1] for row in connection.execute("PRAGMA table_info(summary_notes)")}
     assert columns == {"summary_note_id", "paper_id", "page_number", "normalized_y", "normalized_x", "text", "created_at", "updated_at"}
     connection.close()
 
 
-def test_v10_to_v11_migration_preserves_existing_summary_notes(tmp_path: Path):
+def test_v10_to_v12_migration_preserves_existing_summary_notes(tmp_path: Path):
     database = tmp_path / "v10.sqlite3"
     connection = sqlite3.connect(database)
     connection.execute("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)")
@@ -124,12 +124,12 @@ def test_v10_to_v11_migration_preserves_existing_summary_notes(tmp_path: Path):
 
     migrate(connection)
 
-    assert connection.execute("SELECT max(version) FROM schema_migrations").fetchone()[0] == 11
+    assert connection.execute("SELECT max(version) FROM schema_migrations").fetchone()[0] == 12
     row = connection.execute(
         "SELECT summary_note_id, paper_id, page_number, normalized_y, normalized_x, text, created_at, updated_at FROM summary_notes"
     ).fetchone()
     assert tuple(row) == ("summary", "paper", 2, 0.64, None, "existing summary", "created", "updated")
     assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
     migrate(connection)
-    assert connection.execute("SELECT max(version) FROM schema_migrations").fetchone()[0] == 11
+    assert connection.execute("SELECT max(version) FROM schema_migrations").fetchone()[0] == 12
     connection.close()

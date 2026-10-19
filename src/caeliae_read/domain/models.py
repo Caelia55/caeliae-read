@@ -17,6 +17,22 @@ class Paper:
 
 
 @dataclass(frozen=True)
+class PaperMetadata:
+    paper_id: str
+    title: str | None
+    authors: list[str] | None
+    publication_year: int | None
+    venue: str | None
+    doi: str | None
+    arxiv_id: str | None
+    citation_key: str | None
+    updated_at: str
+
+    def public_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class Checkpoint:
     paper_id: str
     session_id: str

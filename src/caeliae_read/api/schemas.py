@@ -3,11 +3,37 @@ from __future__ import annotations
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator, model_validator
 
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+class PaperMetadataPutInput(StrictModel):
+    title: Annotated[StrictStr | None, Field(max_length=2_000)]
+    authors: list[Annotated[StrictStr, Field(max_length=500)]] | None = Field(max_length=128)
+    publication_year: StrictInt | None
+    venue: Annotated[StrictStr | None, Field(max_length=500)]
+    doi: Annotated[StrictStr | None, Field(max_length=512)]
+    arxiv_id: Annotated[StrictStr | None, Field(max_length=128)]
+    citation_key: Annotated[StrictStr | None, Field(max_length=128)]
+
+
+class PaperMetadataOutput(StrictModel):
+    title: str | None
+    authors: list[str] | None
+    publication_year: int | None
+    venue: str | None
+    doi: str | None
+    arxiv_id: str | None
+    citation_key: str | None
+    updated_at: str
+
+
+class PaperMetadataEnvelope(StrictModel):
+    paper_id: str
+    metadata: PaperMetadataOutput | None
 
 
 class SummaryNoteCreateInput(StrictModel):

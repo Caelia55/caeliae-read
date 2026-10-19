@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from caeliae_read import __version__
-from caeliae_read.api.schemas import ReadingDraftInput, ReadingFeedbackInput, ReadingStateInput, ReadingStateSaved, ReadingSubmitInput, ReadingTaskCreateInput, SummaryNoteCreateInput, SummaryNoteUpdateInput, VocabularyDetailOutput, VocabularyEntryResponse, VocabularyFromSelectionInput, VocabularyInput, VocabularyListOutput, VocabularyLookupInput, VocabularyLookupOutput, VocabularyMutationOutput, VocabularyOccurrenceInput, VocabularyReviewInput, VocabularyUpdateInput
+from caeliae_read.api.schemas import PaperMetadataEnvelope, PaperMetadataPutInput, ReadingDraftInput, ReadingFeedbackInput, ReadingStateInput, ReadingStateSaved, ReadingSubmitInput, ReadingTaskCreateInput, SummaryNoteCreateInput, SummaryNoteUpdateInput, VocabularyDetailOutput, VocabularyEntryResponse, VocabularyFromSelectionInput, VocabularyInput, VocabularyListOutput, VocabularyLookupInput, VocabularyLookupOutput, VocabularyMutationOutput, VocabularyOccurrenceInput, VocabularyReviewInput, VocabularyUpdateInput
 from caeliae_read.application.service import (
     CheckpointConflictError,
     CaeliaeReadError,
@@ -24,6 +24,7 @@ from caeliae_read.application.service import (
     ReadingValidationError,
     SessionNotFoundError,
     ValidationError,
+    PaperMetadataValidationError,
     VocabularyNotFoundError,
     get_service,
     require_uuid,
@@ -37,7 +38,7 @@ def problem(error: CaeliaeReadError) -> HTTPException:
         code = status.HTTP_409_CONFLICT
     elif isinstance(error, (PaperNotFoundError, SessionNotFoundError, ReadingNotFoundError, VocabularyNotFoundError)):
         code = status.HTTP_404_NOT_FOUND
-    elif isinstance(error, ReadingValidationError):
+    elif isinstance(error, (ReadingValidationError, PaperMetadataValidationError)):
         code = status.HTTP_422_UNPROCESSABLE_CONTENT
     else:
         code = status.HTTP_400_BAD_REQUEST
@@ -124,6 +125,24 @@ def create_app(
             filename=paper.original_filename,
             content_disposition_type="inline",
         )
+
+    @app.get("/api/papers/{paper_id}/metadata", response_model=PaperMetadataEnvelope)
+    async def get_paper_metadata(paper_id: str) -> dict[str, object]:
+        try:
+            return read_service.get_paper_metadata(paper_id)
+        except CaeliaeReadError as error:
+            raise problem(error) from error
+
+    @app.put("/api/papers/{paper_id}/metadata", response_model=PaperMetadataEnvelope)
+    async def replace_paper_metadata(
+        paper_id: str, payload: PaperMetadataPutInput
+    ) -> dict[str, object]:
+        try:
+            return read_service.replace_paper_metadata(
+                paper_id, payload.model_dump(mode="json")
+            )
+        except CaeliaeReadError as error:
+            raise problem(error) from error
 
     @app.post("/api/papers/{paper_id}/sessions", status_code=status.HTTP_201_CREATED)
     async def create_session(paper_id: str) -> dict[str, str]:

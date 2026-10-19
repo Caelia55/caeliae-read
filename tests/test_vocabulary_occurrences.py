@@ -76,10 +76,10 @@ def _selection_json() -> str:
     )
 
 
-def test_fresh_database_reaches_v11_without_changing_legacy_api_shape(tmp_path: Path):
+def test_fresh_database_reaches_v12_without_changing_legacy_api_shape(tmp_path: Path):
     repository = CaeliaeReadRepository(tmp_path / "fresh.sqlite3")
     with repository.connection() as connection:
-        assert connection.execute("SELECT max(version) FROM schema_migrations").fetchone()[0] == 11
+        assert connection.execute("SELECT max(version) FROM schema_migrations").fetchone()[0] == 12
         columns = {row[1] for row in connection.execute("PRAGMA table_info(vocabulary_entries)")}
         assert {"lemma", "entry_type"}.issubset(columns)
         assert connection.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='vocabulary_occurrences'").fetchone()
@@ -88,7 +88,7 @@ def test_fresh_database_reaches_v11_without_changing_legacy_api_shape(tmp_path: 
     assert repository.list_vocabulary() == []
 
 
-def test_v9_to_v11_backfills_sources_without_merging_or_changing_reviews(tmp_path: Path):
+def test_v9_to_v12_backfills_sources_without_merging_or_changing_reviews(tmp_path: Path):
     database = tmp_path / "v9.sqlite3"
     connection = _bootstrap(database, 9)
     _insert_paper_and_session(connection)
@@ -119,7 +119,7 @@ def test_v9_to_v11_backfills_sources_without_merging_or_changing_reviews(tmp_pat
 
     migrate(connection)
 
-    assert connection.execute("SELECT max(version) FROM schema_migrations").fetchone()[0] == 11
+    assert connection.execute("SELECT max(version) FROM schema_migrations").fetchone()[0] == 12
     assert connection.execute("SELECT count(*) FROM vocabulary_entries").fetchone()[0] == 4
     assert connection.execute("SELECT count(*) FROM vocabulary_review_results").fetchone()[0] == 1
     assert connection.execute("SELECT lemma FROM vocabulary_entries WHERE vocabulary_id='vocab-sourced'").fetchone()[0] is None

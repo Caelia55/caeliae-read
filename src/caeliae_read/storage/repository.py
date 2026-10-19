@@ -6,7 +6,7 @@ from pathlib import Path
 import sqlite3
 from typing import Any, Iterator
 
-from caeliae_read.domain.models import Annotation, Checkpoint, Paper, ReadingContext, Selection, StickyNote, SummaryNote, VocabularyEntry, VocabularyOccurrence, VocabularyReviewResult
+from caeliae_read.domain.models import Annotation, Checkpoint, Paper, PaperMetadata, ReadingContext, Selection, StickyNote, SummaryNote, VocabularyEntry, VocabularyOccurrence, VocabularyReviewResult
 from caeliae_read.storage.migrations import migrate
 
 
@@ -115,6 +115,79 @@ class CaeliaeReadRepository:
                 (limit,),
             ).fetchall()
         return [self._paper(row) for row in rows]
+
+    @staticmethod
+    def _paper_metadata(row: sqlite3.Row) -> PaperMetadata:
+        authors = json.loads(row["authors_json"]) if row["authors_json"] is not None else None
+        return PaperMetadata(
+            paper_id=row["paper_id"],
+            title=row["title"],
+            authors=authors,
+            publication_year=row["publication_year"],
+            venue=row["venue"],
+            doi=row["doi"],
+            arxiv_id=row["arxiv_id"],
+            citation_key=row["citation_key"],
+            updated_at=row["updated_at"],
+        )
+
+    def get_paper_metadata(self, paper_id: str) -> PaperMetadata | None:
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM paper_metadata WHERE paper_id = ?", (paper_id,)
+            ).fetchone()
+        return self._paper_metadata(row) if row else None
+
+    def upsert_paper_metadata(
+        self,
+        *,
+        paper_id: str,
+        title: str | None,
+        authors: list[str] | None,
+        publication_year: int | None,
+        venue: str | None,
+        doi: str | None,
+        arxiv_id: str | None,
+        citation_key: str | None,
+        updated_at: str,
+    ) -> PaperMetadata:
+        authors_json = json.dumps(authors, ensure_ascii=False, separators=(",", ":")) if authors is not None else None
+        with self.connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO paper_metadata(
+                    paper_id, title, authors_json, publication_year, venue,
+                    doi, arxiv_id, citation_key, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(paper_id) DO UPDATE SET
+                    title = excluded.title,
+                    authors_json = excluded.authors_json,
+                    publication_year = excluded.publication_year,
+                    venue = excluded.venue,
+                    doi = excluded.doi,
+                    arxiv_id = excluded.arxiv_id,
+                    citation_key = excluded.citation_key,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    paper_id,
+                    title,
+                    authors_json,
+                    publication_year,
+                    venue,
+                    doi,
+                    arxiv_id,
+                    citation_key,
+                    updated_at,
+                ),
+            )
+            connection.commit()
+            row = connection.execute(
+                "SELECT * FROM paper_metadata WHERE paper_id = ?", (paper_id,)
+            ).fetchone()
+        if row is None:
+            raise RepositoryError("paper metadata was not persisted")
+        return self._paper_metadata(row)
 
     def create_session(
         self, *, session_id: str, paper_id: str, created_at: str

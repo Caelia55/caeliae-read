@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from pypdf import PdfReader
 
 from caeliae_read.config import Settings, get_settings
+from caeliae_read.application.paper_metadata import PaperMetadataNormalizationError, normalize_paper_metadata
 from caeliae_read.domain.models import Annotation, Checkpoint, Paper, ReadingContext, Selection
 from caeliae_read.storage.migrations import derive_entry_type, derive_selection_occurrence
 from caeliae_read.storage.repository import (
@@ -34,6 +35,10 @@ class CaeliaeReadError(RuntimeError):
 
 class ValidationError(CaeliaeReadError):
     code = "validation_error"
+
+
+class PaperMetadataValidationError(CaeliaeReadError):
+    code = "paper_metadata_validation_error"
 
 
 class PaperNotFoundError(CaeliaeReadError):
@@ -208,6 +213,34 @@ class CaeliaeReadService:
         if not path.is_file():
             raise PaperNotFoundError("paper file not found")
         return paper, path
+
+    def get_paper_metadata(self, paper_id: str) -> dict[str, object]:
+        target = require_uuid(paper_id, "paper_id")
+        self.get_paper(target)
+        metadata = self.repository.get_paper_metadata(target)
+        metadata_payload = metadata.public_dict() if metadata else None
+        if metadata_payload is not None:
+            metadata_payload.pop("paper_id", None)
+        return {
+            "paper_id": target,
+            "metadata": metadata_payload,
+        }
+
+    def replace_paper_metadata(self, paper_id: str, payload: dict[str, object]) -> dict[str, object]:
+        target = require_uuid(paper_id, "paper_id")
+        self.get_paper(target)
+        try:
+            normalized = normalize_paper_metadata(payload)
+        except PaperMetadataNormalizationError as error:
+            raise PaperMetadataValidationError(str(error)) from error
+        metadata = self.repository.upsert_paper_metadata(
+            paper_id=target,
+            **normalized,
+            updated_at=utc_now(),
+        )
+        metadata_payload = metadata.public_dict()
+        metadata_payload.pop("paper_id", None)
+        return {"paper_id": target, "metadata": metadata_payload}
 
     def create_session(self, paper_id: str) -> dict[str, str]:
         paper_id = require_uuid(paper_id, "paper_id")

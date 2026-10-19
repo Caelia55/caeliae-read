@@ -296,6 +296,27 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
             CHECK (normalized_x IS NULL OR (normalized_x >= 0 AND normalized_x <= 1));
         """,
     ),
+    (
+        12,
+        """
+        CREATE TABLE paper_metadata (
+            paper_id TEXT PRIMARY KEY
+                REFERENCES papers(paper_id) ON DELETE CASCADE,
+            title TEXT NULL,
+            authors_json TEXT NULL,
+            publication_year INTEGER NULL
+                CHECK (
+                    publication_year IS NULL
+                    OR publication_year BETWEEN 1000 AND 2100
+                ),
+            venue TEXT NULL,
+            doi TEXT NULL,
+            arxiv_id TEXT NULL,
+            citation_key TEXT NULL,
+            updated_at TEXT NOT NULL
+        );
+        """,
+    ),
 )
 
 
