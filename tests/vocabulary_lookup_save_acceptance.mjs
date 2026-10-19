@@ -73,6 +73,30 @@ try {
       await page.keyboard.press("Escape");
       await page.locator(".selection-composer").waitFor({ state: "detached" });
     }
+    await page.waitForFunction((expectedWord) => {
+      const span = [...document.querySelectorAll(".text-layer span")]
+        .find((item) => item.textContent?.includes(expectedWord));
+      if (!span) return false;
+      const first = span.getBoundingClientRect();
+      if (first.width < 4 || first.height < 4) return false;
+      return new Promise((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          if (!span.isConnected) {
+            resolve(false);
+            return;
+          }
+          const second = span.getBoundingClientRect();
+          resolve(
+            Math.abs(first.x - second.x) < 0.5
+            && Math.abs(first.y - second.y) < 0.5
+            && Math.abs(first.width - second.width) < 0.5
+            && Math.abs(first.height - second.height) < 0.5
+            && second.width >= 4
+            && second.height >= 4,
+          );
+        }));
+      });
+    }, word);
     const target = page.locator(".text-layer span").filter({ hasText: word }).first();
     await target.waitFor();
     const box = await target.boundingBox();
