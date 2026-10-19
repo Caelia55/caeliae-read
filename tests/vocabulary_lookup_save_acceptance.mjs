@@ -75,15 +75,13 @@ try {
     }
     const target = page.locator(".text-layer span").filter({ hasText: word }).first();
     await target.waitFor();
-    await target.evaluate((span) => {
-      if (!span.firstChild) throw new Error("lookup-save selection span has no text node");
-      const range = document.createRange();
-      range.selectNodeContents(span);
-      const selection = document.getSelection();
-      selection?.removeAllRanges();
-      selection?.addRange(range);
-      span.closest(".text-layer")?.parentElement?.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
-    });
+    const box = await target.boundingBox();
+    if (!box || box.width < 4 || box.height < 4) throw new Error(`lookup-save selection target is not selectable: ${word}`);
+    const y = box.y + box.height / 2;
+    await page.mouse.move(box.x + 1, y);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width - 1, y, { steps: 6 });
+    await page.mouse.up();
     await page.locator(".selection-composer").waitFor();
   }
 
