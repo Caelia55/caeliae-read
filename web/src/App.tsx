@@ -11,11 +11,15 @@ import {
   ApiError,
   createSession,
   getContext,
+  getPaperMetadata,
   listPapers,
   paperFileUrl,
   saveState,
+  updatePaperMetadata,
   uploadPaper,
   type Paper,
+  type PaperMetadata,
+  type PaperMetadataPayload,
   type Quad,
   type SelectionState,
   type Annotation,
@@ -57,6 +61,15 @@ const SUMMARY_PLACEMENT_MESSAGE = "点击页面空白处放置大意 · Esc 取�
 
 type SelectionDraft = Omit<SelectionState, "revision">;
 type LookupEditDraft = { lemma: string; part_of_speech: string; definition: string };
+type PaperMetadataForm = {
+  title: string;
+  authors: string;
+  publication_year: string;
+  venue: string;
+  doi: string;
+  arxiv_id: string;
+  citation_key: string;
+};
 type StickyNoteDraft = { x: number; y: number; text: string; style_key: UserAnnotationStyle; id?: string };
 type SummaryNoteDraft = { normalized_y: number; normalized_x: number | null; text: string; id?: string };
 type StickyDragState = {
@@ -92,6 +105,38 @@ const READING_MODE = new URLSearchParams(window.location.search).get("mode") ===
 
 function normalizeText(value: string): string {
   return value.replace(/\s+/g, " ").trim();
+}
+
+function emptyPaperMetadataForm(): PaperMetadataForm {
+  return { title: "", authors: "", publication_year: "", venue: "", doi: "", arxiv_id: "", citation_key: "" };
+}
+
+function paperMetadataToForm(metadata: PaperMetadata | null): PaperMetadataForm {
+  return {
+    title: metadata?.title ?? "",
+    authors: metadata?.authors?.join("\n") ?? "",
+    publication_year: metadata?.publication_year === null || metadata?.publication_year === undefined ? "" : String(metadata.publication_year),
+    venue: metadata?.venue ?? "",
+    doi: metadata?.doi ?? "",
+    arxiv_id: metadata?.arxiv_id ?? "",
+    citation_key: metadata?.citation_key ?? "",
+  };
+}
+
+function paperMetadataFormToPayload(form: PaperMetadataForm): { payload?: PaperMetadataPayload; error?: string } {
+  const year = form.publication_year.trim();
+  if (year && !/^\d+$/.test(year)) return { error: "年份必须是整数。" };
+  return {
+    payload: {
+      title: form.title.trim() || null,
+      authors: form.authors.trim() ? form.authors.split("\n") : null,
+      publication_year: year ? Number(year) : null,
+      venue: form.venue.trim() || null,
+      doi: form.doi.trim() || null,
+      arxiv_id: form.arxiv_id.trim() || null,
+      citation_key: form.citation_key.trim() || null,
+    },
+  };
 }
 
 function lookupSourceLabel(source: VocabularyLookupSource): string {
@@ -514,6 +559,14 @@ export function App() {
   const [compact, setCompact] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [papersPanelOpen, setPapersPanelOpen] = useState(() => readPanelOpen(PAPERS_PANEL_KEY, true));
+  const [paperMetadataPanelOpen, setPaperMetadataPanelOpen] = useState(false);
+  const [paperMetadata, setPaperMetadata] = useState<PaperMetadata | null>(null);
+  const [paperMetadataStatus, setPaperMetadataStatus] = useState<"idle" | "loading" | "loaded" | "error">("idle");
+  const [paperMetadataError, setPaperMetadataError] = useState<string | null>(null);
+  const [paperMetadataEditing, setPaperMetadataEditing] = useState(false);
+  const [paperMetadataDraft, setPaperMetadataDraft] = useState<PaperMetadataForm>(emptyPaperMetadataForm);
+  const [paperMetadataSaving, setPaperMetadataSaving] = useState(false);
+  const [paperMetadataReloadToken, setPaperMetadataReloadToken] = useState(0);
   const [annotationsPanelOpen, setAnnotationsPanelOpen] = useState(() => readPanelOpen(ANNOTATIONS_PANEL_KEY, false));
   const [annotationIndexFilter, setAnnotationIndexFilter] = useState<AnnotationIndexFilter>("all");
   const [annotationIndexFocus, setAnnotationIndexFocus] = useState<string | null>(null);
@@ -597,6 +650,11 @@ export function App() {
   const writeChainRef = useRef<Promise<void>>(Promise.resolve());
   const drawerOpenRef = useRef(false);
   const papersPanelOpenRef = useRef(papersPanelOpen);
+  const paperOpenRequestRef = useRef(0);
+  const paperMetadataRequestRef = useRef(0);
+  const paperMetadataAbortRef = useRef<AbortController | null>(null);
+  const paperMetadataSaveRequestRef = useRef(0);
+  const paperMetadataSaveAbortRef = useRef<AbortController | null>(null);
   const annotationsPanelOpenRef = useRef(annotationsPanelOpen);
   const annotationCardOpenRef = useRef(false);
   const selectingTextRef = useRef(false);
@@ -1086,6 +1144,92 @@ export function App() {
     if (open) setToolbarSlim(false);
   }, [clearSelectionLookup, clearSelectionPreview]);
 
+  const cancelPaperMetadataEdit = useCallback(() => {
+    setPaperMetadataDraft(paperMetadataToForm(paperMetadata));
+    setPaperMetadataEditing(false);
+    setPaperMetadataError(null);
+  }, [paperMetadata]);
+
+  const openPaperMetadata = useCallback(() => {
+    if (!paper) return;
+    setPaperMetadataPanelOpen(true);
+    setPaperMetadataEditing(false);
+    setPaperMetadataError(null);
+  }, [paper]);
+
+  const closePaperMetadata = useCallback(() => {
+    if (paperMetadataEditing) cancelPaperMetadataEdit();
+    setPaperMetadataPanelOpen(false);
+    setPaperMetadataError(null);
+  }, [cancelPaperMetadataEdit, paperMetadataEditing]);
+
+  const savePaperMetadata = useCallback(async () => {
+    if (!paper || paperMetadataSaving) return;
+    const normalized = paperMetadataFormToPayload(paperMetadataDraft);
+    if (!normalized.payload) {
+      setPaperMetadataError(normalized.error ?? "文献信息无效。");
+      return;
+    }
+    const paperId = paper.paper_id;
+    const requestId = ++paperMetadataSaveRequestRef.current;
+    paperMetadataSaveAbortRef.current?.abort();
+    const controller = new AbortController();
+    paperMetadataSaveAbortRef.current = controller;
+    setPaperMetadataSaving(true);
+    setPaperMetadataError(null);
+    try {
+      const result = await updatePaperMetadata(paperId, normalized.payload, controller.signal);
+      if (requestId !== paperMetadataSaveRequestRef.current || paper?.paper_id !== paperId) return;
+      setPaperMetadata(result.metadata);
+      setPaperMetadataDraft(paperMetadataToForm(result.metadata));
+      setPaperMetadataEditing(false);
+      setPaperMetadataStatus("loaded");
+    } catch (error) {
+      if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) return;
+      if (requestId !== paperMetadataSaveRequestRef.current || paper?.paper_id !== paperId) return;
+      setPaperMetadataError(error instanceof Error ? error.message : "文献信息保存失败。");
+    } finally {
+      if (requestId === paperMetadataSaveRequestRef.current) {
+        setPaperMetadataSaving(false);
+        paperMetadataSaveAbortRef.current = null;
+      }
+    }
+  }, [paper, paperMetadataDraft, paperMetadataSaving]);
+
+  useEffect(() => {
+    const paperId = paper?.paper_id;
+    paperMetadataAbortRef.current?.abort();
+    paperMetadataAbortRef.current = null;
+    paperMetadataSaveAbortRef.current?.abort();
+    paperMetadataSaveAbortRef.current = null;
+    const requestId = ++paperMetadataRequestRef.current;
+    paperMetadataSaveRequestRef.current += 1;
+    setPaperMetadata(null);
+    setPaperMetadataDraft(emptyPaperMetadataForm());
+    setPaperMetadataEditing(false);
+    setPaperMetadataError(null);
+    setPaperMetadataSaving(false);
+    if (!paperId || !paperMetadataPanelOpen) {
+      setPaperMetadataStatus("idle");
+      return;
+    }
+    const controller = new AbortController();
+    paperMetadataAbortRef.current = controller;
+    setPaperMetadataStatus("loading");
+    void getPaperMetadata(paperId, controller.signal).then((result) => {
+      if (controller.signal.aborted || requestId !== paperMetadataRequestRef.current || paper?.paper_id !== paperId) return;
+      setPaperMetadata(result.metadata);
+      setPaperMetadataDraft(paperMetadataToForm(result.metadata));
+      setPaperMetadataStatus("loaded");
+    }).catch((error: unknown) => {
+      if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) return;
+      if (requestId !== paperMetadataRequestRef.current || paper?.paper_id !== paperId) return;
+      setPaperMetadataStatus("error");
+      setPaperMetadataError(error instanceof Error ? error.message : "文献信息加载失败。");
+    });
+    return () => controller.abort();
+  }, [paper?.paper_id, paperMetadataPanelOpen, paperMetadataReloadToken]);
+
   useEffect(() => {
     if (!compact) { updateDrawerOpen(false); setHeaderCompact(false); }
     else updateDrawerOpen(false);
@@ -1138,7 +1282,27 @@ export function App() {
     if (compact && node.scrollTop > 96) setToolbarSlim(true);
     return () => node.removeEventListener("scroll", onScroll);
   }, [compact]);
-  useEffect(() => { const close = (e: KeyboardEvent) => { if (e.key === "Escape") { updateDrawerOpen(false); updatePapersPanelOpen(false); updateAnnotationsPanelOpen(false); updateAnnotationCardOpen(false); } }; window.addEventListener("keydown", close); return () => window.removeEventListener("keydown", close); }, [updateAnnotationCardOpen, updateAnnotationsPanelOpen, updateDrawerOpen, updatePapersPanelOpen]);
+  useEffect(() => {
+    const close = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (paperMetadataEditing) {
+        e.preventDefault();
+        cancelPaperMetadataEdit();
+        return;
+      }
+      if (paperMetadataPanelOpen) {
+        e.preventDefault();
+        closePaperMetadata();
+        return;
+      }
+      updateDrawerOpen(false);
+      updatePapersPanelOpen(false);
+      updateAnnotationsPanelOpen(false);
+      updateAnnotationCardOpen(false);
+    };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [cancelPaperMetadataEdit, closePaperMetadata, paperMetadataEditing, paperMetadataPanelOpen, updateAnnotationCardOpen, updateAnnotationsPanelOpen, updateDrawerOpen, updatePapersPanelOpen]);
 
   useEffect(() => {
     const releaseSelectionGuard = () => {
@@ -2162,7 +2326,9 @@ export function App() {
   }, [activeAnnotationId, annotationEditNote, annotations, clearSelectionLookup, pageNumber, paper, scheduleState, sessionId, updateAnnotationCardOpen]);
 
   async function openPaper(nextPaper: Paper) {
+    const requestId = ++paperOpenRequestRef.current;
     const session = await createSession(nextPaper.paper_id);
+    if (requestId !== paperOpenRequestRef.current) return;
     localStorage.setItem(ACTIVE_PAPER, nextPaper.paper_id);
     localStorage.setItem(ACTIVE_SESSION, session.session_id);
     revisionRef.current = 0;
@@ -2197,6 +2363,58 @@ export function App() {
     if (readingPanelOpen && readingPanelKind === kind) setReadingPanelOpen(false);
     else { setReadingPanelKind(kind); setReadingPanelOpen(true); }
   };
+
+  const paperMetadataPanel = paper && paperMetadataPanelOpen ? (
+    <section className="paper-metadata-panel" aria-label="文献信息" data-testid="paper-metadata-panel">
+      <header className="paper-metadata-heading">
+        <div>
+          <strong>文献信息</strong>
+          <span>{paper.original_filename}（文件名）</span>
+        </div>
+        <button type="button" className="side-panel-close" aria-label="关闭文献信息" onClick={closePaperMetadata}>×</button>
+      </header>
+      {paperMetadataStatus === "loading" && <p className="paper-metadata-status" data-testid="paper-metadata-loading">正在加载文献信息…</p>}
+      {paperMetadataStatus === "error" && <div className="paper-metadata-error" role="alert" data-testid="paper-metadata-load-error">
+        <span>无法加载文献信息：{paperMetadataError ?? "请稍后重试。"}</span>
+        <button type="button" onClick={() => setPaperMetadataReloadToken((value) => value + 1)}>重试</button>
+      </div>}
+      {paperMetadataStatus === "loaded" && !paperMetadataEditing && <>
+        {paperMetadata === null ? <p className="paper-metadata-empty" data-testid="paper-metadata-empty">尚未填写文献信息</p> : <p className="paper-metadata-saved" data-testid="paper-metadata-saved">已保存文献信息</p>}
+        <dl className="paper-metadata-fields" data-testid="paper-metadata-view">
+          <div><dt>标题</dt><dd>{paperMetadata?.title || "—"}</dd></div>
+          <div><dt>文件名</dt><dd>{paper.original_filename}</dd></div>
+          <div><dt>作者</dt><dd>{paperMetadata?.authors?.length ? paperMetadata.authors.join("、") : "—"}</dd></div>
+          <div><dt>年份</dt><dd>{paperMetadata?.publication_year ?? "—"}</dd></div>
+          <div><dt>期刊 / 会议</dt><dd>{paperMetadata?.venue || "—"}</dd></div>
+          <div><dt>DOI</dt><dd>{paperMetadata?.doi ? <a href={`https://doi.org/${encodeURIComponent(paperMetadata.doi)}`} target="_blank" rel="noopener noreferrer">{paperMetadata.doi}</a> : "—"}</dd></div>
+          <div><dt>arXiv</dt><dd>{paperMetadata?.arxiv_id ? <a href={`https://arxiv.org/abs/${encodeURIComponent(paperMetadata.arxiv_id)}`} target="_blank" rel="noopener noreferrer">{paperMetadata.arxiv_id}</a> : "—"}</dd></div>
+          <div><dt>引用键</dt><dd>{paperMetadata?.citation_key || "—"}</dd></div>
+        </dl>
+        <button type="button" className="paper-metadata-edit" data-testid="paper-metadata-edit" onClick={() => { setPaperMetadataDraft(paperMetadataToForm(paperMetadata)); setPaperMetadataError(null); setPaperMetadataEditing(true); }}>编辑</button>
+      </>}
+      {paperMetadataStatus === "loaded" && paperMetadataEditing && <form className="paper-metadata-form" data-testid="paper-metadata-form" onSubmit={(event) => { event.preventDefault(); void savePaperMetadata(); }}>
+        <label htmlFor="metadata-title">标题</label>
+        <input id="metadata-title" value={paperMetadataDraft.title} onChange={(event) => setPaperMetadataDraft((current) => ({ ...current, title: event.target.value }))} />
+        <label htmlFor="metadata-authors">作者 <span>每行一位，保留顺序</span></label>
+        <textarea id="metadata-authors" value={paperMetadataDraft.authors} placeholder="每行一位作者" onChange={(event) => setPaperMetadataDraft((current) => ({ ...current, authors: event.target.value }))} />
+        <label htmlFor="metadata-year">年份</label>
+        <input id="metadata-year" type="number" step="1" inputMode="numeric" value={paperMetadataDraft.publication_year} onChange={(event) => setPaperMetadataDraft((current) => ({ ...current, publication_year: event.target.value }))} />
+        <label htmlFor="metadata-venue">期刊 / 会议</label>
+        <input id="metadata-venue" value={paperMetadataDraft.venue} onChange={(event) => setPaperMetadataDraft((current) => ({ ...current, venue: event.target.value }))} />
+        <label htmlFor="metadata-doi">DOI</label>
+        <input id="metadata-doi" value={paperMetadataDraft.doi} placeholder="10...." onChange={(event) => setPaperMetadataDraft((current) => ({ ...current, doi: event.target.value }))} />
+        <label htmlFor="metadata-arxiv">arXiv ID</label>
+        <input id="metadata-arxiv" value={paperMetadataDraft.arxiv_id} placeholder="2401.12345" onChange={(event) => setPaperMetadataDraft((current) => ({ ...current, arxiv_id: event.target.value }))} />
+        <label htmlFor="metadata-citation-key">引用键</label>
+        <input id="metadata-citation-key" value={paperMetadataDraft.citation_key} onChange={(event) => setPaperMetadataDraft((current) => ({ ...current, citation_key: event.target.value }))} />
+        {paperMetadataError && <p className="paper-metadata-error" role="alert" data-testid="paper-metadata-save-error">{paperMetadataError}</p>}
+        <div className="paper-metadata-actions">
+          <button type="button" onClick={cancelPaperMetadataEdit} disabled={paperMetadataSaving}>取消</button>
+          <button type="submit" className="primary" disabled={paperMetadataSaving}>{paperMetadataSaving ? "保存中…" : "保存"}</button>
+        </div>
+      </form>}
+    </section>
+  ) : null;
 
   return (
     <main className={`app-shell${headerCompact ? " header-compact" : ""}`} data-header-compact={headerCompact} onPointerMove={handleReaderPointerMove} onPointerDown={handleReaderPointerDown}>
@@ -2237,6 +2455,8 @@ export function App() {
             ))}
             {papers.length === 0 && <p className="empty">PDF 只保存在这台 Caeliae Read 的数据目录中。</p>}
           </div>
+          <button type="button" className="paper-metadata-trigger" data-testid="paper-metadata-open" disabled={!paper} onClick={openPaperMetadata}>文献信息</button>
+          {!compact && paperMetadataPanel}
         </aside>
 
         <section className={`reader${showAnnotationPanel ? " has-annotation-index" : ""}${showReaderSidePanel ? " has-reading-panel" : ""}${READING_MODE ? " has-reading-task" : ""}`} ref={readerRef} aria-label="PDF 阅读器">
@@ -2279,7 +2499,7 @@ export function App() {
           </nav>}
            {stickyPlacementMode && <div className="sticky-placement-hint" role="status">{STICKY_PLACEMENT_MESSAGE}</div>}
            {summaryPlacementMode && <div className="summary-placement-hint" role="status">{SUMMARY_PLACEMENT_MESSAGE}</div>}
-          {compact && drawerOpen && <div className="paper-drawer" role="dialog" aria-label="选择论文" onClick={() => updateDrawerOpen(false)}><div className="paper-drawer-panel" onClick={(e) => e.stopPropagation()}><header><strong>本地论文（{papers.length}）</strong><button type="button" onClick={() => updatePapersPanelOpen(false)} aria-label="关闭论文列表">×</button></header><div className="paper-list">{papers.map((item) => <button className={item.paper_id === paper?.paper_id ? "paper-card active" : "paper-card"} key={item.paper_id} type="button" title={item.original_filename} onClick={() => { void openPaper(item); updateDrawerOpen(false); }}><strong>{item.original_filename}</strong><span>{item.page_count} 页</span></button>)}</div></div></div>}
+          {compact && drawerOpen && <div className="paper-drawer" role="dialog" aria-label="选择论文" onClick={() => updateDrawerOpen(false)}><div className="paper-drawer-panel" onClick={(e) => e.stopPropagation()}><header><strong>本地论文（{papers.length}）</strong><div className="paper-drawer-actions"><button type="button" className="paper-metadata-drawer-trigger" disabled={!paper} onClick={openPaperMetadata}>文献信息</button><button type="button" onClick={() => updatePapersPanelOpen(false)} aria-label="关闭论文列表">×</button></div></header><div className="paper-list">{papers.map((item) => <button className={item.paper_id === paper?.paper_id ? "paper-card active" : "paper-card"} key={item.paper_id} type="button" title={item.original_filename} onClick={() => { void openPaper(item); updateDrawerOpen(false); }}><strong>{item.original_filename}</strong><span>{item.page_count} 页</span></button>)}</div>{paperMetadataPanel}</div></div>}
           {selectionComposerDraft && <aside
             ref={selectionComposerRef}
             className={`selection-composer${overlayDragging === "composer" ? " is-overlay-dragging" : ""}${overlayResizing === "composer" ? " is-overlay-resizing" : ""}`}

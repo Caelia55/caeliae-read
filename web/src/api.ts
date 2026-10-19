@@ -6,6 +6,32 @@ export interface Paper {
   created_at: string;
 }
 
+export interface PaperMetadata {
+  title: string | null;
+  authors: string[] | null;
+  publication_year: number | null;
+  venue: string | null;
+  doi: string | null;
+  arxiv_id: string | null;
+  citation_key: string | null;
+  updated_at: string;
+}
+
+export interface PaperMetadataPayload {
+  title: string | null;
+  authors: string[] | null;
+  publication_year: number | null;
+  venue: string | null;
+  doi: string | null;
+  arxiv_id: string | null;
+  citation_key: string | null;
+}
+
+export interface PaperMetadataEnvelope {
+  paper_id: string;
+  metadata: PaperMetadata | null;
+}
+
 export interface Quad {
   x: number;
   y: number;
@@ -142,6 +168,23 @@ export async function uploadPaper(file: File): Promise<{ paper: Paper; deduplica
 export async function listPapers(): Promise<Paper[]> {
   const result = await checked(await fetch("/api/papers")).then((r) => r.json()) as { papers: Paper[] };
   return result.papers;
+}
+
+export async function getPaperMetadata(paperId: string, signal?: AbortSignal): Promise<PaperMetadataEnvelope> {
+  return checked(await fetch(`/api/papers/${paperId}/metadata`, { signal })).then((r) => r.json());
+}
+
+export async function updatePaperMetadata(
+  paperId: string,
+  payload: PaperMetadataPayload,
+  signal?: AbortSignal,
+): Promise<PaperMetadataEnvelope> {
+  return checked(await fetch(`/api/papers/${paperId}/metadata`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    signal,
+  })).then((r) => r.json());
 }
 
 export async function createSession(paperId: string): Promise<{ paper_id: string; session_id: string }> {
