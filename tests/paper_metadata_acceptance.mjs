@@ -44,6 +44,7 @@ async function openPaperMetadata(page) {
 
 try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const visiblePaperList = page.locator('[data-testid="paper-list-view"]:visible');
   let raceMode = false;
   let firstPaper;
   let racePaper;
@@ -80,8 +81,12 @@ try {
   await page.getByText("1 / 2").waitFor();
 
   const firstFilename = "selectable-paper.pdf";
+  assert.equal(await visiblePaperList.count(), 1, "Papers view did not render its visible list");
+  assert.equal(await page.getByTestId("paper-metadata-panel").count(), 0, "metadata rendered while Papers view was active");
   await openPaperMetadata(page);
   await page.getByTestId("paper-metadata-empty").waitFor();
+  assert.equal(await page.getByTestId("paper-list-view").count(), 0, "paper list remained in metadata view");
+  assert.equal(await page.getByRole("button", { name: "返回" }).count(), 1, "metadata view did not expose a keyboard-accessible back button");
   assert((await page.getByTestId("paper-metadata-panel").innerText()).includes(firstFilename), "empty metadata view did not show the original filename");
 
   await page.getByTestId("paper-metadata-edit").click();
@@ -140,7 +145,13 @@ try {
   await page.getByTestId("paper-metadata-saved").waitFor();
   assert(!(await page.getByTestId("paper-metadata-view").innerText()).includes("A Normalized Paper Title"), "cleared title remained visible");
   assert((await page.getByTestId("paper-metadata-view").innerText()).includes("—"), "cleared metadata did not display missing fields consistently");
-  await page.getByRole("button", { name: "关闭文献信息" }).click();
+  await page.getByRole("button", { name: "返回" }).click();
+  await visiblePaperList.waitFor();
+  assert.equal(await page.getByTestId("paper-metadata-panel").count(), 0, "back did not return to Papers view");
+  assert.equal(await paperCard(page, firstFilename).locator("xpath=.").getAttribute("class"), "paper-card active", "back did not preserve selected paper");
+  await page.getByTestId("paper-metadata-open").click();
+  await page.getByTestId("paper-metadata-saved").waitFor();
+  await page.getByRole("button", { name: "关闭论文面板" }).click();
 
   const secondUpload = {
     name: "second-selectable-paper.pdf",
@@ -160,22 +171,31 @@ try {
   raceMode = true;
   await openPaperMetadata(page);
   await Promise.race([delayedGet, wait(5_000).then(() => { throw new Error("A metadata GET was not observed"); })]);
+  await page.getByRole("button", { name: "返回" }).click();
+  await visiblePaperList.waitFor();
+  assert.equal(await page.getByTestId("paper-metadata-panel").count(), 0, "return during loading did not leave metadata view");
   await paperCard(page, firstFilename).click();
   await page.waitForFunction((paperId) => localStorage.getItem("caeliae.read.activePaperId") === paperId, firstPaper.paper_id);
+  await page.getByTestId("paper-metadata-open").click();
   await page.getByTestId("paper-metadata-view").waitFor();
   await wait(600);
   assert(!(await page.getByTestId("paper-metadata-panel").innerText()).includes("STALE B GET"), "stale B GET overwrote A metadata view");
 
+  await page.getByRole("button", { name: "返回" }).click();
+  await wait(600);
   await paperCard(page, secondUpload.name).click();
   await page.waitForFunction((paperId) => localStorage.getItem("caeliae.read.activePaperId") === paperId, secondPaper.paper_id);
+  await page.getByTestId("paper-metadata-open").click();
   await page.getByTestId("paper-metadata-panel").waitFor();
   await page.getByTestId("paper-metadata-empty").waitFor();
   await page.getByTestId("paper-metadata-edit").click();
   await page.getByLabel("标题").fill("pending A save");
   await page.getByRole("button", { name: "保存" }).click();
   await Promise.race([delayedPut, wait(5_000).then(() => { throw new Error("A metadata PUT was not observed"); })]);
+  await page.getByRole("button", { name: "返回" }).click();
   await paperCard(page, firstFilename).click();
   await page.waitForFunction((paperId) => localStorage.getItem("caeliae.read.activePaperId") === paperId, firstPaper.paper_id);
+  await page.getByTestId("paper-metadata-open").click();
   await page.getByTestId("paper-metadata-view").waitFor();
   await wait(600);
   assert(!(await page.getByTestId("paper-metadata-panel").innerText()).includes("STALE B PUT"), "stale B PUT overwrote A metadata view");
@@ -185,8 +205,20 @@ try {
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth), false, "metadata UI introduced responsive overflow");
   await page.locator("nav.compact-toolbar").getByRole("button", { name: /^论文/ }).click();
   await page.locator(".paper-drawer").waitFor();
+  await visiblePaperList.waitFor();
   await page.locator(".paper-metadata-drawer-trigger").click();
-  await page.locator(".paper-drawer .paper-metadata-panel").waitFor();
+  const compactMetadataPanel = page.locator(".paper-drawer .paper-metadata-panel");
+  await compactMetadataPanel.waitFor();
+  assert.equal(await page.getByTestId("paper-list-view").count(), 0, "compact metadata view still rendered the paper list");
+  await page.locator(".paper-metadata-edit:visible").click();
+  await page.locator("#metadata-title:visible").fill("A very long title ".repeat(40));
+  await page.locator("#metadata-doi:visible").fill(`10.1234/${"x".repeat(180)}`);
+  const overflow = await page.evaluate(() => {
+    const nodes = [document.documentElement, document.querySelector(".paper-drawer-panel"), document.querySelector(".paper-metadata-panel")].filter(Boolean);
+    return nodes.map((node) => node.scrollWidth > node.clientWidth);
+  });
+  assert.deepEqual(overflow, [false, false, false], "metadata drawer introduced horizontal overflow with long fields");
+  await page.keyboard.press("Escape");
 
   console.log(JSON.stringify({
     emptyView: true,
@@ -197,6 +229,9 @@ try {
     invalidDraftPreserved: true,
     staleGetRejected: true,
     stalePutRejected: true,
+    mutuallyExclusiveViews: true,
+    backNavigation: true,
+    narrowNoHorizontalOverflow: true,
     responsive: true,
   }, null, 2));
 } finally {

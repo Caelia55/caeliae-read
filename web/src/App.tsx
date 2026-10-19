@@ -559,7 +559,8 @@ export function App() {
   const [compact, setCompact] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [papersPanelOpen, setPapersPanelOpen] = useState(() => readPanelOpen(PAPERS_PANEL_KEY, true));
-  const [paperMetadataPanelOpen, setPaperMetadataPanelOpen] = useState(false);
+  const [paperPanelView, setPaperPanelView] = useState<"papers" | "metadata">("papers");
+  const paperMetadataPanelOpen = paperPanelView === "metadata";
   const [paperMetadata, setPaperMetadata] = useState<PaperMetadata | null>(null);
   const [paperMetadataStatus, setPaperMetadataStatus] = useState<"idle" | "loading" | "loaded" | "error">("idle");
   const [paperMetadataError, setPaperMetadataError] = useState<string | null>(null);
@@ -1103,6 +1104,7 @@ export function App() {
   const updatePapersPanelOpen = useCallback((open: boolean) => {
     papersPanelOpenRef.current = open;
     setPapersPanelOpen(open);
+    setPaperPanelView("papers");
     try { localStorage.setItem(PAPERS_PANEL_KEY, String(open)); } catch { /* storage is optional */ }
     if (open && compact) {
       annotationsPanelOpenRef.current = false;
@@ -1152,14 +1154,14 @@ export function App() {
 
   const openPaperMetadata = useCallback(() => {
     if (!paper) return;
-    setPaperMetadataPanelOpen(true);
+    setPaperPanelView("metadata");
     setPaperMetadataEditing(false);
     setPaperMetadataError(null);
   }, [paper]);
 
   const closePaperMetadata = useCallback(() => {
     if (paperMetadataEditing) cancelPaperMetadataEdit();
-    setPaperMetadataPanelOpen(false);
+    setPaperPanelView("papers");
     setPaperMetadataError(null);
   }, [cancelPaperMetadataEdit, paperMetadataEditing]);
 
@@ -2367,11 +2369,12 @@ export function App() {
   const paperMetadataPanel = paper && paperMetadataPanelOpen ? (
     <section className="paper-metadata-panel" aria-label="文献信息" data-testid="paper-metadata-panel">
       <header className="paper-metadata-heading">
-        <div>
-          <strong>文献信息</strong>
-          <span>{paper.original_filename}（文件名）</span>
+        <button type="button" className="paper-metadata-back" onClick={closePaperMetadata}>返回</button>
+        <div className="paper-metadata-heading-copy">
+          <strong>{paperMetadata?.title?.trim() || paper.original_filename}</strong>
+          <span>{paperMetadata?.title?.trim() ? `${paper.original_filename} · ${paper.page_count} 页` : `尚未填写书目标题 · ${paper.page_count} 页`}</span>
         </div>
-        <button type="button" className="side-panel-close" aria-label="关闭文献信息" onClick={closePaperMetadata}>×</button>
+        <button type="button" className="side-panel-close" aria-label="关闭论文面板" onClick={() => updatePapersPanelOpen(false)}>×</button>
       </header>
       {paperMetadataStatus === "loading" && <p className="paper-metadata-status" data-testid="paper-metadata-loading">正在加载文献信息…</p>}
       {paperMetadataStatus === "error" && <div className="paper-metadata-error" role="alert" data-testid="paper-metadata-load-error">
@@ -2416,6 +2419,23 @@ export function App() {
     </section>
   ) : null;
 
+  const paperList = (
+    <div className="paper-list" data-testid="paper-list-view">
+      {papers.map((item) => (
+        <button
+          className={item.paper_id === paper?.paper_id ? "paper-card active" : "paper-card"}
+          key={item.paper_id}
+          type="button"
+          onClick={() => void openPaper(item)}
+        >
+          <strong>{item.original_filename}</strong>
+          <span>{item.page_count} 页 · {(item.size_bytes / 1024).toFixed(0)} KB</span>
+        </button>
+      ))}
+      {papers.length === 0 && <p className="empty">PDF 只保存在这台 Caeliae Read 的数据目录中。</p>}
+    </div>
+  );
+
   return (
     <main className={`app-shell${headerCompact ? " header-compact" : ""}`} data-header-compact={headerCompact} onPointerMove={handleReaderPointerMove} onPointerDown={handleReaderPointerDown}>
       <header className="topbar" data-compact={headerCompact} ref={headerRef} onPointerDown={beginHeaderOperation} onPointerUp={endHeaderOperation} onPointerCancel={endHeaderOperation}>
@@ -2436,27 +2456,15 @@ export function App() {
       </header>
 
       <section className={`workspace${compact ? " compact" : ""}`} data-layout={compact ? "compact" : "desktop"} data-drawer-open={drawerOpen} data-papers-open={papersPanelOpen} data-annotations-open={showAnnotationPanel} data-annotation-card-open={annotationCardOpen} data-active-annotation-id={activeAnnotationId ?? ""} data-selecting-text={isSelectingText} ref={workspaceRef}>
-        <aside className="library side-panel" aria-label="论文列表">
-          <div className="section-heading side-panel-heading">
-            <span>本地论文 <small>{papers.length}</small></span>
-            <button type="button" className="side-panel-close" aria-label="关闭论文面板" onClick={() => updatePapersPanelOpen(false)}>×</button>
-          </div>
-          <div className="paper-list">
-            {papers.map((item) => (
-              <button
-                className={item.paper_id === paper?.paper_id ? "paper-card active" : "paper-card"}
-                key={item.paper_id}
-                type="button"
-                onClick={() => void openPaper(item)}
-              >
-                <strong>{item.original_filename}</strong>
-                <span>{item.page_count} 页 · {(item.size_bytes / 1024).toFixed(0)} KB</span>
-              </button>
-            ))}
-            {papers.length === 0 && <p className="empty">PDF 只保存在这台 Caeliae Read 的数据目录中。</p>}
-          </div>
-          <button type="button" className="paper-metadata-trigger" data-testid="paper-metadata-open" disabled={!paper} onClick={openPaperMetadata}>文献信息</button>
-          {!compact && paperMetadataPanel}
+        <aside className="library side-panel" aria-label={paperPanelView === "metadata" ? "文献信息" : "论文列表"}>
+          {paperPanelView === "metadata" && paperMetadataPanel ? paperMetadataPanel : <>
+            <div className="section-heading side-panel-heading">
+              <span>本地论文 <small>{papers.length}</small></span>
+              <button type="button" className="side-panel-close" aria-label="关闭论文面板" onClick={() => updatePapersPanelOpen(false)}>×</button>
+            </div>
+            {paperList}
+            <button type="button" className="paper-metadata-trigger" data-testid="paper-metadata-open" disabled={!paper} onClick={openPaperMetadata}>文献信息</button>
+          </>}
         </aside>
 
         <section className={`reader${showAnnotationPanel ? " has-annotation-index" : ""}${showReaderSidePanel ? " has-reading-panel" : ""}${READING_MODE ? " has-reading-task" : ""}`} ref={readerRef} aria-label="PDF 阅读器">
@@ -2499,7 +2507,7 @@ export function App() {
           </nav>}
            {stickyPlacementMode && <div className="sticky-placement-hint" role="status">{STICKY_PLACEMENT_MESSAGE}</div>}
            {summaryPlacementMode && <div className="summary-placement-hint" role="status">{SUMMARY_PLACEMENT_MESSAGE}</div>}
-          {compact && drawerOpen && <div className="paper-drawer" role="dialog" aria-label="选择论文" onClick={() => updateDrawerOpen(false)}><div className="paper-drawer-panel" onClick={(e) => e.stopPropagation()}><header><strong>本地论文（{papers.length}）</strong><div className="paper-drawer-actions"><button type="button" className="paper-metadata-drawer-trigger" disabled={!paper} onClick={openPaperMetadata}>文献信息</button><button type="button" onClick={() => updatePapersPanelOpen(false)} aria-label="关闭论文列表">×</button></div></header><div className="paper-list">{papers.map((item) => <button className={item.paper_id === paper?.paper_id ? "paper-card active" : "paper-card"} key={item.paper_id} type="button" title={item.original_filename} onClick={() => { void openPaper(item); updateDrawerOpen(false); }}><strong>{item.original_filename}</strong><span>{item.page_count} 页</span></button>)}</div>{paperMetadataPanel}</div></div>}
+           {compact && drawerOpen && <div className="paper-drawer" role="dialog" aria-label={paperPanelView === "metadata" ? "文献信息" : "选择论文"} onClick={() => updatePapersPanelOpen(false)}><div className="paper-drawer-panel" onClick={(e) => e.stopPropagation()}>{paperPanelView === "metadata" && paperMetadataPanel ? paperMetadataPanel : <><header><strong>本地论文（{papers.length}）</strong><div className="paper-drawer-actions"><button type="button" className="paper-metadata-drawer-trigger" disabled={!paper} onClick={openPaperMetadata}>文献信息</button><button type="button" onClick={() => updatePapersPanelOpen(false)} aria-label="关闭论文列表">×</button></div></header><div className="paper-list" data-testid="paper-list-view">{papers.map((item) => <button className={item.paper_id === paper?.paper_id ? "paper-card active" : "paper-card"} key={item.paper_id} type="button" title={item.original_filename} onClick={() => { void openPaper(item); updatePapersPanelOpen(false); }}><strong>{item.original_filename}</strong><span>{item.page_count} 页</span></button>)}</div></>}</div></div>}
           {selectionComposerDraft && <aside
             ref={selectionComposerRef}
             className={`selection-composer${overlayDragging === "composer" ? " is-overlay-dragging" : ""}${overlayResizing === "composer" ? " is-overlay-resizing" : ""}`}
