@@ -81,6 +81,9 @@ try {
   await page.getByText("1 / 2").waitFor();
 
   const firstFilename = "selectable-paper.pdf";
+  const initialPapers = (await (await page.request.get(`${baseURL}/api/papers`)).json()).papers;
+  firstPaper = initialPapers.find((item) => item.original_filename === firstFilename);
+  assert(firstPaper, "initial acceptance paper was not found");
   assert.equal(await visiblePaperList.count(), 1, "Papers view did not render its visible list");
   assert.equal(await page.getByTestId("paper-metadata-panel").count(), 0, "metadata rendered while Papers view was active");
   await openPaperMetadata(page);
@@ -142,7 +145,10 @@ try {
   await page.getByTestId("paper-metadata-edit").click();
   for (const label of ["标题", "作者", "年份", "期刊 / 会议", "DOI", "arXiv ID", "引用键"]) await page.getByLabel(label).fill("");
   await page.getByRole("button", { name: "保存" }).click();
-  await page.getByTestId("paper-metadata-saved").waitFor();
+  await page.getByTestId("paper-metadata-empty").waitFor();
+  assert.equal(await page.getByTestId("paper-metadata-saved").count(), 0, "all-null metadata row was presented as saved");
+  const clearedMetadata = await (await page.request.get(`${baseURL}/api/papers/${firstPaper.paper_id}/metadata`)).json();
+  assert(clearedMetadata.metadata !== null, "clearing metadata unexpectedly removed the persisted row");
   assert(!(await page.getByTestId("paper-metadata-view").innerText()).includes("A Normalized Paper Title"), "cleared title remained visible");
   assert((await page.getByTestId("paper-metadata-view").innerText()).includes("—"), "cleared metadata did not display missing fields consistently");
   await page.getByRole("button", { name: "返回" }).click();
@@ -150,7 +156,7 @@ try {
   assert.equal(await page.getByTestId("paper-metadata-panel").count(), 0, "back did not return to Papers view");
   assert.equal(await paperCard(page, firstFilename).locator("xpath=.").getAttribute("class"), "paper-card active", "back did not preserve selected paper");
   await page.getByTestId("paper-metadata-open").click();
-  await page.getByTestId("paper-metadata-saved").waitFor();
+  await page.getByTestId("paper-metadata-empty").waitFor();
   await page.getByRole("button", { name: "关闭论文面板" }).click();
 
   const secondUpload = {

@@ -139,6 +139,19 @@ function paperMetadataFormToPayload(form: PaperMetadataForm): { payload?: PaperM
   };
 }
 
+function hasPaperBibliographicMetadata(metadata: PaperMetadata | null): boolean {
+  if (!metadata) return false;
+  return Boolean(
+    metadata.title?.trim()
+    || metadata.authors?.some((author) => author.trim())
+    || metadata.publication_year != null
+    || metadata.venue?.trim()
+    || metadata.doi?.trim()
+    || metadata.arxiv_id?.trim()
+    || metadata.citation_key?.trim(),
+  );
+}
+
 function lookupSourceLabel(source: VocabularyLookupSource): string {
   if (source.provider === "wordnet") return source.version ? `WordNet ${source.version}` : "WordNet";
   return source.version ? `${source.provider} ${source.version}` : source.provider;
@@ -2382,7 +2395,7 @@ export function App() {
         <button type="button" onClick={() => setPaperMetadataReloadToken((value) => value + 1)}>重试</button>
       </div>}
       {paperMetadataStatus === "loaded" && !paperMetadataEditing && <>
-        {paperMetadata === null ? <p className="paper-metadata-empty" data-testid="paper-metadata-empty">尚未填写文献信息</p> : <p className="paper-metadata-saved" data-testid="paper-metadata-saved">已保存文献信息</p>}
+        {hasPaperBibliographicMetadata(paperMetadata) ? <p className="paper-metadata-saved" data-testid="paper-metadata-saved">已保存文献信息</p> : <p className="paper-metadata-empty" data-testid="paper-metadata-empty">尚未填写文献信息</p>}
         <dl className="paper-metadata-fields" data-testid="paper-metadata-view">
           <div><dt>标题</dt><dd>{paperMetadata?.title || "—"}</dd></div>
           <div><dt>文件名</dt><dd>{paper.original_filename}</dd></div>

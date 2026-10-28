@@ -25,7 +25,7 @@ async function openMetadata(page) {
   await page.locator(".paper-metadata-drawer-trigger").click();
 }
 
-async function saveMetadata(page, values) {
+async function saveMetadata(page, values, expectedStatus = "saved") {
   await page.getByTestId("paper-metadata-edit").click();
   await page.getByLabel("标题").fill(values.title ?? "");
   await page.getByLabel("作者").fill(values.authors ?? "");
@@ -36,7 +36,7 @@ async function saveMetadata(page, values) {
   await page.getByLabel("引用键").fill(values.citation_key ?? "");
   assert.equal(await page.getByTestId("paper-metadata-export").count(), 0, "export remained visible in edit mode");
   await page.getByRole("button", { name: "保存" }).click();
-  await page.getByTestId("paper-metadata-saved").waitFor();
+  await page.getByTestId(expectedStatus === "empty" ? "paper-metadata-empty" : "paper-metadata-saved").waitFor();
 }
 
 async function downloadFromUI(page) {
@@ -66,6 +66,21 @@ try {
   assert.equal(await page.getByTestId("paper-metadata-export").count(), 0, "export was enabled without metadata");
   assert.equal(await page.getByTestId("paper-metadata-export-unavailable").innerText(), "请先填写文献信息");
   assert.equal(bibtexRequests, 0, "unavailable export triggered a BibTeX request");
+
+  await saveMetadata(page, {}, "empty");
+  assert.equal(await page.getByTestId("paper-metadata-saved").count(), 0, "all-null metadata row was presented as saved");
+  const allNullMetadata = await (await page.request.get(`${baseURL}/api/papers/${(await (await page.request.get(`${baseURL}/api/papers`)).json()).papers[0].paper_id}/metadata`)).json();
+  assert(allNullMetadata.metadata !== null, "all-null save removed the metadata row");
+  await page.getByRole("button", { name: "返回" }).click();
+  await openMetadata(page);
+  await page.getByTestId("paper-metadata-empty").waitFor();
+
+  await saveMetadata(page, { authors: "Ada Lovelace" });
+  assert.equal(await page.getByTestId("paper-metadata-saved").count(), 1, "authors-only metadata was not presented as saved");
+  assert.equal(await page.getByTestId("paper-metadata-export-unavailable").innerText(), "请先填写书目标题");
+  await saveMetadata(page, { year: "2026" });
+  assert.equal(await page.getByTestId("paper-metadata-saved").count(), 1, "year-only metadata was not presented as saved");
+  assert.equal(await page.getByTestId("paper-metadata-export-unavailable").innerText(), "请先填写书目标题");
 
   await saveMetadata(page, { title: "A UI BibTeX Title" });
   assert.equal(await page.getByTestId("paper-metadata-fallback-hint").innerText(), "未填写 Citation key，将使用临时稳定引用键");
