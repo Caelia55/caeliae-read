@@ -6,6 +6,7 @@ dependencies.  It serializes already-loaded domain objects only.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import hashlib
 import re
 
@@ -13,8 +14,11 @@ from caeliae_read.domain.models import Paper, PaperMetadata
 
 __all__ = [
     "BibtexSerializationError",
+    "BibtexSerializationResult",
+    "bibtex_attachment_filename",
     "fallback_citation_key",
     "serialize_bibtex",
+    "serialize_bibtex_result",
 ]
 
 
@@ -22,8 +26,18 @@ class BibtexSerializationError(ValueError):
     """Raised when a paper cannot be represented by the V1 BibTeX contract."""
 
 
+@dataclass(frozen=True)
+class BibtexSerializationResult:
+    """Serialized text together with the exact entry key used in the body."""
+
+    citation_key: str
+    text: str
+
+
 _MAX_CITATION_KEY_LENGTH = 128
+_MAX_ATTACHMENT_KEY_LENGTH = 96
 _SAFE_CITATION_KEY_RE = re.compile(r"[^a-z0-9._:-]+")
+_SAFE_ATTACHMENT_KEY_RE = re.compile(r"[^A-Za-z0-9._-]+")
 _BIBTEX_ESCAPES = {
     "\\": r"\textbackslash{}",
     "{": r"\{",
@@ -73,6 +87,19 @@ def fallback_citation_key(paper_id: str) -> str:
     return f"caeliae-{digest}"[:_MAX_CITATION_KEY_LENGTH]
 
 
+def bibtex_attachment_filename(citation_key: str) -> str:
+    """Return a bounded ASCII-only attachment filename for a citation key."""
+
+    if not isinstance(citation_key, str):
+        citation_key = ""
+    safe_key = _SAFE_ATTACHMENT_KEY_RE.sub("-", citation_key)
+    safe_key = re.sub(r"-+", "-", safe_key).strip("._-")
+    safe_key = safe_key[:_MAX_ATTACHMENT_KEY_LENGTH]
+    if not safe_key:
+        safe_key = "export"
+    return f"caeliae-{safe_key}.bib"
+
+
 def _author_value(authors: list[str]) -> str | None:
     rendered: list[str] = []
     for author in authors:
@@ -90,8 +117,8 @@ def _author_value(authors: list[str]) -> str | None:
     return " and ".join(rendered) or None
 
 
-def serialize_bibtex(paper: Paper, metadata: PaperMetadata) -> str:
-    """Serialize one paper as exactly one deterministic ``@misc`` entry."""
+def serialize_bibtex_result(paper: Paper, metadata: PaperMetadata) -> BibtexSerializationResult:
+    """Serialize one paper and return the exact key used by the entry."""
 
     if not isinstance(metadata.title, str) or not _single_line(metadata.title):
         raise BibtexSerializationError("BibTeX export requires a non-empty metadata.title")
@@ -125,4 +152,10 @@ def serialize_bibtex(paper: Paper, metadata: PaperMetadata) -> str:
         comma = "," if index != last_index else ""
         lines.append(f"  {name} = {{{value}}}{comma}")
     lines.append("}")
-    return "\n".join(lines) + "\n"
+    return BibtexSerializationResult(citation_key=citation_key, text="\n".join(lines) + "\n")
+
+
+def serialize_bibtex(paper: Paper, metadata: PaperMetadata) -> str:
+    """Serialize one paper as exactly one deterministic ``@misc`` entry."""
+
+    return serialize_bibtex_result(paper, metadata).text

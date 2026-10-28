@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 
 from pypdf import PdfReader
 
+from caeliae_read.bibtex import BibtexSerializationError, BibtexSerializationResult, serialize_bibtex_result
 from caeliae_read.config import Settings, get_settings
 from caeliae_read.application.paper_metadata import PaperMetadataNormalizationError, normalize_paper_metadata
 from caeliae_read.domain.models import Annotation, Checkpoint, Paper, ReadingContext, Selection
@@ -39,6 +40,14 @@ class ValidationError(CaeliaeReadError):
 
 class PaperMetadataValidationError(CaeliaeReadError):
     code = "paper_metadata_validation_error"
+
+
+class PaperMetadataNotFoundError(PaperMetadataValidationError):
+    code = "paper_metadata_not_found"
+
+
+class PaperMetadataIncompleteError(PaperMetadataValidationError):
+    code = "paper_metadata_incomplete"
 
 
 class PaperNotFoundError(CaeliaeReadError):
@@ -241,6 +250,21 @@ class CaeliaeReadService:
         metadata_payload = metadata.public_dict()
         metadata_payload.pop("paper_id", None)
         return {"paper_id": target, "metadata": metadata_payload}
+
+    def export_paper_bibtex(self, paper_id: str) -> BibtexSerializationResult:
+        target = require_uuid(paper_id, "paper_id")
+        paper = self.get_paper(target)
+        metadata = self.repository.get_paper_metadata(target)
+        if metadata is None:
+            raise PaperMetadataNotFoundError(
+                "paper metadata is required for BibTeX export"
+            )
+        try:
+            return serialize_bibtex_result(paper, metadata)
+        except BibtexSerializationError as error:
+            raise PaperMetadataIncompleteError(
+                "BibTeX export requires a bibliographic title."
+            ) from error
 
     def create_session(self, paper_id: str) -> dict[str, str]:
         paper_id = require_uuid(paper_id, "paper_id")

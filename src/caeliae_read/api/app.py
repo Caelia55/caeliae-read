@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 from caeliae_read import __version__
 from caeliae_read.api.schemas import PaperMetadataEnvelope, PaperMetadataPutInput, ReadingDraftInput, ReadingFeedbackInput, ReadingStateInput, ReadingStateSaved, ReadingSubmitInput, ReadingTaskCreateInput, SummaryNoteCreateInput, SummaryNoteUpdateInput, VocabularyDetailOutput, VocabularyEntryResponse, VocabularyFromSelectionInput, VocabularyInput, VocabularyListOutput, VocabularyLookupInput, VocabularyLookupOutput, VocabularyMutationOutput, VocabularyOccurrenceInput, VocabularyReviewInput, VocabularyUpdateInput
+from caeliae_read.bibtex import bibtex_attachment_filename
 from caeliae_read.application.service import (
     CheckpointConflictError,
     CaeliaeReadError,
@@ -167,6 +168,27 @@ def create_app(
             )
         except CaeliaeReadError as error:
             raise problem(error) from error
+
+    @app.get(
+        "/api/papers/{paper_id}/bibtex",
+        response_class=Response,
+        responses={
+            200: {
+                "description": "BibTeX attachment",
+                "content": {"application/x-bibtex": {"schema": {"type": "string"}}},
+            }
+        },
+    )
+    async def export_paper_bibtex(paper_id: str) -> Response:
+        try:
+            result = read_service.export_paper_bibtex(paper_id)
+        except CaeliaeReadError as error:
+            raise problem(error) from error
+        return Response(
+            content=result.text,
+            media_type="application/x-bibtex; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{bibtex_attachment_filename(result.citation_key)}"'},
+        )
 
     @app.post("/api/papers/{paper_id}/sessions", status_code=status.HTTP_201_CREATED)
     async def create_session(paper_id: str) -> dict[str, str]:
