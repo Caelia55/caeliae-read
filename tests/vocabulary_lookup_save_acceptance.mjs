@@ -67,6 +67,8 @@ try {
   await page.goto(`${baseURL}/reader/`);
   await page.locator('input[type="file"]').setInputFiles(fixturePath);
   await page.getByText("1 / 1").waitFor();
+  const papersPanelClose = page.locator(".library .side-panel-close");
+  if (await papersPanelClose.isVisible()) await papersPanelClose.click();
 
   async function selectWord(word) {
     if (await page.locator(".selection-composer").count()) {

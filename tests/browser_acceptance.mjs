@@ -19,6 +19,8 @@ try {
   await page.getByRole("button", { name: "下一页" }).click();
   await page.getByText("2 / 2").waitFor();
   await page.locator(".text-layer span").filter({ hasText: "Selected passage" }).waitFor();
+  const papersPanelClose = page.locator(".library .side-panel-close");
+  if (await papersPanelClose.isVisible()) await papersPanelClose.click();
 
   await page.locator(".text-layer").evaluate((layer) => {
     const spans = Array.from(layer.querySelectorAll("span"));

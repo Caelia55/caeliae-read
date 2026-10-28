@@ -16,6 +16,8 @@ try {
   await page.locator('input[type="file"]').setInputFiles(pdfPath);
   await page.getByText("1 / 2").waitFor();
   await page.locator(".pdf-page canvas").waitFor();
+  const papersPanelClose = page.locator(".library .side-panel-close");
+  if (await papersPanelClose.isVisible()) await papersPanelClose.click();
 
   const summaryTool = page.getByRole("button", { name: "+ 大意", exact: true }).first();
   await summaryTool.click();
@@ -90,7 +92,7 @@ try {
         const x = rect.left + rect.width * xRatio;
         const y = rect.top + rect.height * yRatio;
         const target = document.elementFromPoint(x, y);
-        if (!target || target.closest(".text-layer span")) continue;
+        if (!target || target.closest(".text-layer span, .summary-note-marker, .sticky-note-marker, .annotation-mark")) continue;
         const isBlankPageTarget = target === pageNode || target === canvas || target === textLayer || target.closest(".text-layer, .selection-preview-layer, .annotation-layer, .sticky-layer, .summary-note-layer");
         if (isBlankPageTarget) return { x, y, normalizedX: xRatio, normalizedY: yRatio, target: target.className || target.tagName };
       }
@@ -104,7 +106,14 @@ try {
   assert.equal(await page.locator(".summary-placement-hint").count(), 0, "click after Escape unexpectedly re-entered placement mode");
   await summaryTool.click();
   await page.locator(".summary-placement-hint").waitFor();
-  await page.mouse.click(blankPoint.x, blankPoint.y);
+  const blankClickPoint = await page.evaluate(({ normalizedX, normalizedY }) => {
+    const pageNode = document.querySelector(".pdf-page");
+    if (!pageNode) return null;
+    const rect = pageNode.getBoundingClientRect();
+    return { x: rect.left + rect.width * normalizedX, y: rect.top + rect.height * normalizedY };
+  }, blankPoint);
+  assert(blankClickPoint, "PDF page moved before blank placement click");
+  await page.mouse.click(blankClickPoint.x, blankClickPoint.y);
   await page.getByRole("textbox", { name: "大意内容" }).waitFor();
   await page.getByRole("textbox", { name: "大意内容" }).fill("Blank page area summary.");
   await page.getByRole("button", { name: "保存大意" }).click();
@@ -135,7 +144,14 @@ try {
   assert(secondBlankPoint, "No second distinct blank page point was measurable");
   await summaryTool.click();
   await page.locator(".summary-placement-hint").waitFor();
-  await page.mouse.click(secondBlankPoint.x, secondBlankPoint.y);
+  const secondBlankClickPoint = await page.evaluate(({ normalizedX, normalizedY }) => {
+    const pageNode = document.querySelector(".pdf-page");
+    if (!pageNode) return null;
+    const rect = pageNode.getBoundingClientRect();
+    return { x: rect.left + rect.width * normalizedX, y: rect.top + rect.height * normalizedY };
+  }, secondBlankPoint);
+  assert(secondBlankClickPoint, "PDF page moved before second blank placement click");
+  await page.mouse.click(secondBlankClickPoint.x, secondBlankClickPoint.y);
   await page.getByRole("textbox", { name: "大意内容" }).waitFor();
   await page.getByRole("textbox", { name: "大意内容" }).fill("Second spatial summary.");
   await page.getByRole("button", { name: "保存大意" }).click();

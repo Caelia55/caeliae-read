@@ -19,6 +19,8 @@ try {
   await page.getByText("1 / 2").waitFor();
   await page.getByRole("button", { name: "下一页" }).click();
   await page.getByText("2 / 2").waitFor();
+  const papersPanelClose = page.locator(".library .side-panel-close");
+  if (await papersPanelClose.isVisible()) await papersPanelClose.click();
   const target = page.locator(".text-layer span").filter({ hasText: "Selected passage" }).first();
   await target.waitFor();
 
@@ -92,6 +94,7 @@ try {
   const reselectedText = await page.evaluate(() => document.getSelection()?.toString() ?? "");
   assert(reselectedText.includes("Selected passage"), "annotated text was not reselectable");
   await page.keyboard.press("Escape");
+  await page.evaluate(() => document.getSelection()?.removeAllRanges());
 
   const entryTarget = mark.locator(".annotation-entry-target");
   const entryDot = entryTarget.locator(".annotation-entry-dot");
