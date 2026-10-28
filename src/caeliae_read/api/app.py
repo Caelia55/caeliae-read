@@ -27,6 +27,7 @@ from caeliae_read.application.service import (
     SessionNotFoundError,
     ValidationError,
     PaperMetadataValidationError,
+    PaperBundleExportError,
     VocabularyNotFoundError,
     get_service,
     require_uuid,
@@ -53,7 +54,7 @@ def problem(error: CaeliaeReadError) -> HTTPException:
         code = status.HTTP_409_CONFLICT
     elif isinstance(error, (PaperNotFoundError, SessionNotFoundError, ReadingNotFoundError, VocabularyNotFoundError)):
         code = status.HTTP_404_NOT_FOUND
-    elif isinstance(error, (ReadingValidationError, PaperMetadataValidationError)):
+    elif isinstance(error, (ReadingValidationError, PaperMetadataValidationError, PaperBundleExportError)):
         code = status.HTTP_422_UNPROCESSABLE_CONTENT
     else:
         code = status.HTTP_400_BAD_REQUEST
@@ -188,6 +189,27 @@ def create_app(
             content=result.text,
             media_type="application/x-bibtex; charset=utf-8",
             headers={"Content-Disposition": f'attachment; filename="{bibtex_attachment_filename(result.citation_key)}"'},
+        )
+
+    @app.get(
+        "/api/papers/{paper_id}/bundle",
+        response_class=Response,
+        responses={
+            200: {
+                "description": "Portable Paper Bundle V1 ZIP attachment",
+                "content": {"application/zip": {"schema": {"type": "string", "format": "binary"}}},
+            }
+        },
+    )
+    async def export_paper_bundle(paper_id: str) -> Response:
+        try:
+            result = read_service.export_paper_bundle(paper_id)
+        except CaeliaeReadError as error:
+            raise problem(error) from error
+        return Response(
+            content=result.content,
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{result.filename}"'},
         )
 
     @app.post("/api/papers/{paper_id}/sessions", status_code=status.HTTP_201_CREATED)

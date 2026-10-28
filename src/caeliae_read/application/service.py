@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterable
 from functools import lru_cache
 import hashlib
+from io import BytesIO
 import json
 import os
 from pathlib import Path
@@ -13,7 +14,9 @@ from datetime import UTC, datetime
 
 from pypdf import PdfReader
 
+from caeliae_read.application.bundle_export import PaperBundleExport, assemble_paper_bundle
 from caeliae_read.bibtex import BibtexSerializationError, BibtexSerializationResult, serialize_bibtex_result
+from caeliae_read.bundle import BundleSerializationError
 from caeliae_read.config import Settings, get_settings
 from caeliae_read.application.paper_metadata import PaperMetadataNormalizationError, normalize_paper_metadata
 from caeliae_read.domain.models import Annotation, Checkpoint, Paper, ReadingContext, Selection
@@ -52,6 +55,18 @@ class PaperMetadataIncompleteError(PaperMetadataValidationError):
 
 class PaperNotFoundError(CaeliaeReadError):
     code = "paper_not_found"
+
+
+class PaperBundleExportError(CaeliaeReadError):
+    code = "paper_bundle_export_error"
+
+
+class PaperStorageIntegrityError(PaperBundleExportError):
+    code = "paper_storage_integrity_error"
+
+
+class PaperBundleSerializationError(PaperBundleExportError):
+    code = "paper_bundle_serialization_error"
 
 
 class SessionNotFoundError(CaeliaeReadError):
@@ -265,6 +280,58 @@ class CaeliaeReadService:
             raise PaperMetadataIncompleteError(
                 "BibTeX export requires a bibliographic title."
             ) from error
+
+    def export_paper_bundle(
+        self,
+        paper_id: str,
+        *,
+        exported_at: str | None = None,
+    ) -> PaperBundleExport:
+        """Read and assemble one Portable Paper Bundle without mutating state."""
+
+        target = require_uuid(paper_id, "paper_id")
+        try:
+            paper, storage_key, expected_sha256, expected_mime = self.repository.get_paper_bundle_source(target)
+        except NotFoundError as error:
+            raise PaperNotFoundError("paper not found") from error
+
+        try:
+            path = self._paper_path(storage_key)
+            if not path.is_file():
+                raise OSError("stored paper is missing")
+            pdf_bytes = path.read_bytes()
+            if expected_mime != "application/pdf":
+                raise ValueError("stored paper mime type is invalid")
+            if len(pdf_bytes) != paper.size_bytes:
+                raise ValueError("stored paper size does not match its record")
+            if hashlib.sha256(pdf_bytes).hexdigest() != expected_sha256:
+                raise ValueError("stored paper checksum does not match its record")
+            if not pdf_bytes.startswith(b"%PDF-"):
+                raise ValueError("stored paper signature is invalid")
+            page_count = len(PdfReader(BytesIO(pdf_bytes), strict=False).pages)
+            if page_count != paper.page_count or page_count < 1:
+                raise ValueError("stored paper page count does not match its record")
+        except Exception as error:
+            raise PaperStorageIntegrityError("stored paper failed integrity validation") from error
+
+        metadata = self.repository.get_paper_metadata(target)
+        annotations = self.repository.list_annotations(target)
+        sticky_notes = self.repository.list_sticky_notes(target)
+        summary_notes = self.repository.list_summary_notes(target)
+        try:
+            return assemble_paper_bundle(
+                paper=paper,
+                content_sha256=expected_sha256,
+                mime_type=expected_mime,
+                pdf_bytes=pdf_bytes,
+                metadata=metadata,
+                annotations=annotations,
+                sticky_notes=sticky_notes,
+                summary_notes=summary_notes,
+                exported_at=exported_at or utc_now(),
+            )
+        except BundleSerializationError as error:
+            raise PaperBundleSerializationError("paper bundle could not be serialized") from error
 
     def create_session(self, paper_id: str) -> dict[str, str]:
         paper_id = require_uuid(paper_id, "paper_id")

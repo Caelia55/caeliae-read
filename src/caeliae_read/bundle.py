@@ -12,10 +12,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import io
 import math
 import re
 from collections.abc import Iterable, Mapping
 from typing import Any
+import unicodedata
+import zipfile
 
 from caeliae_read.domain.models import Annotation, PaperMetadata, StickyNote, SummaryNote
 
@@ -254,6 +257,60 @@ def serialize_manifest(manifest: BundleManifest) -> bytes:
     return canonical_json_bytes(manifest.to_dict())
 
 
+def build_bundle_zip(*, manifest: BundleManifest, payloads: Mapping[str, bytes]) -> bytes:
+    """Build a deterministic ZIP from the final payload bytes and manifest."""
+
+    manifest_bytes = serialize_manifest(manifest)
+    described_paths = {descriptor.path for descriptor in manifest.files}
+    if set(payloads) != described_paths:
+        raise BundleSerializationError("manifest files must exactly match bundle payloads")
+    for path, data in payloads.items():
+        if path not in _FILE_SPECS or not isinstance(data, bytes):
+            raise BundleSerializationError("bundle payload is invalid")
+        descriptor = next(item for item in manifest.files if item.path == path)
+        if descriptor.size_bytes != len(data) or descriptor.sha256 != sha256_bytes(data):
+            raise BundleSerializationError(f"manifest checksum does not match {path}")
+
+    output = io.BytesIO()
+    with zipfile.ZipFile(
+        output,
+        mode="w",
+        compression=zipfile.ZIP_DEFLATED,
+        compresslevel=9,
+    ) as archive:
+        for path in ("manifest.json", *_FILE_ORDER):
+            if path == "manifest.json":
+                data = manifest_bytes
+            elif path in payloads:
+                data = payloads[path]
+            else:
+                continue
+            info = zipfile.ZipInfo(path, date_time=(1980, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.create_system = 0
+            info.external_attr = 0
+            info.flag_bits = 0x800
+            archive.writestr(info, data)
+    return output.getvalue()
+
+
+def bundle_attachment_filename(original_filename: str, content_sha256: str) -> str:
+    """Return a bounded ASCII attachment name without local path information."""
+
+    _validate_sha256(content_sha256, "content_sha256")
+    if not isinstance(original_filename, str):
+        original_filename = ""
+    stem = original_filename.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+    if "." in stem:
+        stem = stem.rsplit(".", 1)[0]
+    stem = unicodedata.normalize("NFKD", stem).encode("ascii", "ignore").decode("ascii")
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "-", stem)
+    stem = re.sub(r"-+", "-", stem).strip("._-")[:80]
+    if not stem:
+        stem = f"caeliae-paper-{content_sha256[:12]}"
+    return f"{stem}.caeliae-paper.zip"
+
+
 def _metadata_dict(metadata: PaperMetadata | None) -> dict[str, object]:
     if metadata is None:
         state = "absent"
@@ -455,6 +512,8 @@ __all__ = [
     "BundleFileDescriptor",
     "BundleManifest",
     "BundleSerializationError",
+    "build_bundle_zip",
+    "bundle_attachment_filename",
     "CITATION_FILE_KIND",
     "METADATA_FILE_KIND",
     "METADATA_SCHEMA",

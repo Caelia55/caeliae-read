@@ -5,7 +5,7 @@ import re
 
 import pytest
 
-from caeliae_read.bibtex import BibtexSerializationError, fallback_citation_key, serialize_bibtex
+from caeliae_read.bibtex import BibtexSerializationError, fallback_citation_key, portable_fallback_citation_key, serialize_bibtex
 from caeliae_read.domain.models import Paper, PaperMetadata
 
 
@@ -169,6 +169,13 @@ def test_missing_citation_key_is_deterministic_temporary_and_safe() -> None:
     assert fallback_citation_key(unusable_id) == f"caeliae-{expected_digest}"
     assert fallback_citation_key("x" * 500).startswith("caeliae-x")
     assert len(fallback_citation_key("x" * 500)) <= 128
+
+
+def test_portable_fallback_key_uses_only_pdf_content_identity() -> None:
+    digest = "ABCDEF0123456789" + "0" * 48
+    assert portable_fallback_citation_key(digest) == "caeliae-abcdef0123456789"
+    with pytest.raises(BibtexSerializationError):
+        portable_fallback_citation_key("paper-123")
 
 
 def test_output_is_single_entry_with_balanced_structure_and_no_internal_metadata() -> None:

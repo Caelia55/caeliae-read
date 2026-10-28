@@ -108,6 +108,17 @@ class CaeliaeReadRepository:
             raise NotFoundError("paper not found")
         return self._paper(row), row["storage_key"]
 
+    def get_paper_bundle_source(self, paper_id: str) -> tuple[Paper, str, str, str]:
+        """Load the paper identity and storage contract for a read-only export."""
+
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM papers WHERE paper_id = ?", (paper_id,)
+            ).fetchone()
+        if row is None:
+            raise NotFoundError("paper not found")
+        return self._paper(row), row["storage_key"], row["content_sha256"], row["mime_type"]
+
     def list_papers(self, limit: int) -> list[Paper]:
         with self.connection() as connection:
             rows = connection.execute(

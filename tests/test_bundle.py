@@ -16,6 +16,7 @@ from caeliae_read.bundle import (
     PaperIdentity,
     STICKY_NOTES_FILE_KIND,
     SUMMARY_NOTES_FILE_KIND,
+    build_bundle_zip,
     build_file_descriptor,
     build_manifest,
     canonical_json_bytes,
@@ -165,6 +166,24 @@ def test_manifest_requires_core_files_and_rejects_duplicates() -> None:
             paper=identity(),
             files=[descriptor("paper.pdf", PAPER_FILE_KIND, True), descriptor("metadata.json", METADATA_FILE_KIND, True), descriptor("metadata.json", METADATA_FILE_KIND, True)],
             exported_at="now",
+        )
+
+
+def test_bundle_zip_rejects_manifest_payload_checksum_drift() -> None:
+    paper_bytes = b"%PDF-raw"
+    metadata_bytes = b"{}\n"
+    manifest = build_manifest(
+        paper=identity(),
+        files=[
+            descriptor("paper.pdf", PAPER_FILE_KIND, True, paper_bytes),
+            descriptor("metadata.json", METADATA_FILE_KIND, True, metadata_bytes),
+        ],
+        exported_at="2026-10-29T00:00:00Z",
+    )
+    with pytest.raises(BundleSerializationError, match="checksum"):
+        build_bundle_zip(
+            manifest=manifest,
+            payloads={"paper.pdf": b"different", "metadata.json": metadata_bytes},
         )
 
 

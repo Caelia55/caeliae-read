@@ -17,6 +17,7 @@ __all__ = [
     "BibtexSerializationResult",
     "bibtex_attachment_filename",
     "fallback_citation_key",
+    "portable_fallback_citation_key",
     "serialize_bibtex",
     "serialize_bibtex_result",
 ]
@@ -87,6 +88,14 @@ def fallback_citation_key(paper_id: str) -> str:
     return f"caeliae-{digest}"[:_MAX_CITATION_KEY_LENGTH]
 
 
+def portable_fallback_citation_key(content_sha256: str) -> str:
+    """Return the bundle-only fallback key derived from PDF content identity."""
+
+    if not isinstance(content_sha256, str) or re.fullmatch(r"[0-9a-fA-F]{64}", content_sha256) is None:
+        raise BibtexSerializationError("content_sha256 must be a 64-character hexadecimal digest")
+    return f"caeliae-{content_sha256.lower()[:16]}"
+
+
 def bibtex_attachment_filename(citation_key: str) -> str:
     """Return a bounded ASCII-only attachment filename for a citation key."""
 
@@ -117,13 +126,23 @@ def _author_value(authors: list[str]) -> str | None:
     return " and ".join(rendered) or None
 
 
-def serialize_bibtex_result(paper: Paper, metadata: PaperMetadata) -> BibtexSerializationResult:
-    """Serialize one paper and return the exact key used by the entry."""
+def serialize_bibtex_result(
+    paper: Paper,
+    metadata: PaperMetadata,
+    *,
+    fallback_key: str | None = None,
+) -> BibtexSerializationResult:
+    """Serialize one paper and return the exact key used by the entry.
+
+    ``fallback_key`` is an optional caller-supplied key for portable bundle
+    exports. The standalone endpoint keeps its historical paper-ID fallback
+    when this argument is omitted.
+    """
 
     if not isinstance(metadata.title, str) or not _single_line(metadata.title):
         raise BibtexSerializationError("BibTeX export requires a non-empty metadata.title")
 
-    citation_key = metadata.citation_key or fallback_citation_key(paper.paper_id)
+    citation_key = metadata.citation_key or fallback_key or fallback_citation_key(paper.paper_id)
     fields: list[tuple[str, str]] = [("title", _escape_value(metadata.title))]
 
     if metadata.authors:
@@ -155,7 +174,12 @@ def serialize_bibtex_result(paper: Paper, metadata: PaperMetadata) -> BibtexSeri
     return BibtexSerializationResult(citation_key=citation_key, text="\n".join(lines) + "\n")
 
 
-def serialize_bibtex(paper: Paper, metadata: PaperMetadata) -> str:
+def serialize_bibtex(
+    paper: Paper,
+    metadata: PaperMetadata,
+    *,
+    fallback_key: str | None = None,
+) -> str:
     """Serialize one paper as exactly one deterministic ``@misc`` entry."""
 
-    return serialize_bibtex_result(paper, metadata).text
+    return serialize_bibtex_result(paper, metadata, fallback_key=fallback_key).text
