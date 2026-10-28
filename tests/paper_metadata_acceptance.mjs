@@ -25,6 +25,54 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const paperCard = (page, filename) => page.getByRole("button", { name: new RegExp(`^${escapeRegExp(filename)}\\s`) });
 
+async function readMetadataActionLayout(page) {
+  return page.evaluate(() => {
+    const read = (selector) => {
+      const node = [...document.querySelectorAll(selector)].find((candidate) => {
+        const style = getComputedStyle(candidate);
+        return style.display !== "none" && candidate.getClientRects().length > 0;
+      });
+      if (!node) return null;
+      const rect = node.getBoundingClientRect();
+      const style = getComputedStyle(node);
+      return {
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: rect.height,
+        whiteSpace: style.whiteSpace,
+        flexShrink: style.flexShrink,
+      };
+    };
+    return {
+      actions: read('[data-testid="paper-metadata-actions"]'),
+      edit: read('[data-testid="paper-metadata-edit"]'),
+      export: read('[data-testid="paper-metadata-export"]'),
+      horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    };
+  });
+}
+
+function assertSingleLineAction(action, label) {
+  assert(action, `${label} action is missing`);
+  assert(action.width >= 40, `${label} action became too narrow: ${action.width}`);
+  assert(action.height <= 44, `${label} action became too tall: ${action.height}`);
+  assert.equal(action.whiteSpace, "nowrap", `${label} action allowed text wrapping`);
+  assert.equal(action.flexShrink, "0", `${label} action remained shrinkable`);
+}
+
+function assertMetadataActions(layout, { exportVisible }) {
+  assert(layout.actions, "metadata action row is missing");
+  assertSingleLineAction(layout.edit, "Edit");
+  assert.equal(Boolean(layout.export), exportVisible, "unexpected BibTeX action visibility");
+  if (layout.export) {
+    assertSingleLineAction(layout.export, "BibTeX export");
+    assert(Math.abs(layout.export.y - layout.edit.y) <= 1, "BibTeX and Edit actions did not share a row");
+    assert(layout.export.x + layout.export.width <= layout.edit.x + 1, "BibTeX and Edit actions overlap");
+  }
+  assert.equal(layout.horizontalOverflow, false, "metadata actions introduced horizontal overflow");
+}
+
 async function openPaperMetadata(page) {
   const desktopTrigger = page.getByTestId("paper-metadata-open");
   if (await desktopTrigger.isVisible()) {
@@ -91,6 +139,7 @@ try {
   assert.equal(await page.getByTestId("paper-list-view").count(), 0, "paper list remained in metadata view");
   assert.equal(await page.getByRole("button", { name: "返回" }).count(), 1, "metadata view did not expose a keyboard-accessible back button");
   assert((await page.getByTestId("paper-metadata-panel").innerText()).includes(firstFilename), "empty metadata view did not show the original filename");
+  assertMetadataActions(await readMetadataActionLayout(page), { exportVisible: false });
 
   await page.getByTestId("paper-metadata-edit").click();
   await page.getByLabel("标题").fill(metadataPayload.title);
@@ -102,6 +151,7 @@ try {
   await page.getByLabel("引用键").fill("Lovelace2026Example");
   await page.getByRole("button", { name: "保存" }).click();
   await page.getByTestId("paper-metadata-saved").waitFor();
+  assertMetadataActions(await readMetadataActionLayout(page), { exportVisible: true });
   const savedText = await page.getByTestId("paper-metadata-view").innerText();
   assert(savedText.includes("A Normalized Paper Title"), "saved title is not displayed");
   assert(savedText.includes("Ada Lovelace、Grace Hopper、Ada Lovelace"), "author order or duplicate was not preserved");
@@ -225,6 +275,7 @@ try {
   });
   assert.deepEqual(overflow, [false, false, false], "metadata drawer introduced horizontal overflow with long fields");
   await page.keyboard.press("Escape");
+  assertMetadataActions(await readMetadataActionLayout(page), { exportVisible: false });
 
   console.log(JSON.stringify({
     emptyView: true,
@@ -236,6 +287,8 @@ try {
     staleGetRejected: true,
     stalePutRejected: true,
     mutuallyExclusiveViews: true,
+    metadataActionsSingleLine: true,
+    metadataActionsCoexist: true,
     backNavigation: true,
     narrowNoHorizontalOverflow: true,
     responsive: true,
