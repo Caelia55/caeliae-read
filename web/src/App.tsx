@@ -2407,6 +2407,11 @@ export function App() {
           <div><dt>引用键</dt><dd>{paperMetadata?.citation_key || "—"}</dd></div>
         </dl>
         <div className="paper-metadata-actions" data-testid="paper-metadata-actions">
+          <a
+            className="paper-metadata-bundle-export"
+            data-testid="paper-metadata-bundle-export"
+            href={`/api/papers/${paper.paper_id}/bundle`}
+          >导出研究包</a>
           {paperMetadata?.title?.trim() ? <>
             <a
               className="paper-metadata-export"
