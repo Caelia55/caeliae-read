@@ -2393,7 +2393,18 @@ export function App() {
           <div><dt>arXiv</dt><dd>{paperMetadata?.arxiv_id ? <a href={`https://arxiv.org/abs/${encodeURIComponent(paperMetadata.arxiv_id)}`} target="_blank" rel="noopener noreferrer">{paperMetadata.arxiv_id}</a> : "—"}</dd></div>
           <div><dt>引用键</dt><dd>{paperMetadata?.citation_key || "—"}</dd></div>
         </dl>
-        <button type="button" className="paper-metadata-edit" data-testid="paper-metadata-edit" onClick={() => { setPaperMetadataDraft(paperMetadataToForm(paperMetadata)); setPaperMetadataError(null); setPaperMetadataEditing(true); }}>编辑</button>
+        <div className="paper-metadata-actions" data-testid="paper-metadata-actions">
+          {paperMetadata?.title?.trim() ? <>
+            <a
+              className="paper-metadata-export"
+              data-testid="paper-metadata-export"
+              href={`/api/papers/${paper.paper_id}/bibtex`}
+              download
+            >导出 BibTeX</a>
+            {!paperMetadata.citation_key && <span className="paper-metadata-helper" data-testid="paper-metadata-fallback-hint">未填写 Citation key，将使用临时稳定引用键</span>}
+          </> : <span className="paper-metadata-helper" data-testid="paper-metadata-export-unavailable">{paperMetadata === null ? "请先填写文献信息" : "请先填写书目标题"}</span>}
+          <button type="button" className="paper-metadata-edit" data-testid="paper-metadata-edit" onClick={() => { setPaperMetadataDraft(paperMetadataToForm(paperMetadata)); setPaperMetadataError(null); setPaperMetadataEditing(true); }}>编辑</button>
+        </div>
       </>}
       {paperMetadataStatus === "loaded" && paperMetadataEditing && <form className="paper-metadata-form" data-testid="paper-metadata-form" onSubmit={(event) => { event.preventDefault(); void savePaperMetadata(); }}>
         <label htmlFor="metadata-title">标题</label>
