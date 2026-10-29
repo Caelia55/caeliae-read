@@ -12,6 +12,7 @@ import {
   createSession,
   getContext,
   getPaperMetadata,
+  previewPaperBundle,
   listPapers,
   paperFileUrl,
   saveState,
@@ -20,6 +21,9 @@ import {
   type Paper,
   type PaperMetadata,
   type PaperMetadataPayload,
+  type PaperBundlePreview,
+  type PaperBundlePreviewCount,
+  type PaperBundlePreviewDifference,
   type Quad,
   type SelectionState,
   type Annotation,
@@ -90,6 +94,9 @@ type OverlaySize = { width: number; height: number };
 type OverlaySizes = Partial<Record<OverlayKind, OverlaySize>>;
 type AnnotationIndexFilter = "all" | "underline" | "highlight" | "sticky" | "summary" | "note";
 type SyncState = "idle" | "saving" | "saved" | "error";
+type PaperPanelView = "papers" | "metadata" | "bundle-preview";
+type BundlePreviewStatus = "idle" | "validating" | "success" | "error";
+type BundlePreviewFile = { name: string; size: number };
 
 const OVERLAY_SIZES_KEY = "caeliae.read.overlaySizes";
 const OVERLAY_MIN_SIZES: Record<OverlayKind, OverlaySize> = {
@@ -150,6 +157,81 @@ function hasPaperBibliographicMetadata(metadata: PaperMetadata | null): boolean 
     || metadata.arxiv_id?.trim()
     || metadata.citation_key?.trim(),
   );
+}
+
+const BUNDLE_PREVIEW_ERROR_MESSAGES: Record<string, string> = {
+  invalid_bundle: "这不是有效的 Caeliae 研究包。",
+  unsupported_bundle_version: "研究包版本暂不支持。",
+  unsafe_bundle_archive: "研究包包含不安全的压缩内容。",
+  bundle_integrity_error: "研究包文件完整性校验失败。",
+  bundle_schema_error: "研究包数据格式无效。",
+};
+
+const BUNDLE_METADATA_STATUS_LABELS: Record<string, string> = {
+  incoming_absent: "研究包中没有文献信息",
+  no_change: "无需变更",
+  would_create: "将新增文献信息",
+  identical: "与本地文献信息一致",
+  conflict: "文献信息存在差异",
+};
+
+const BUNDLE_METADATA_FIELD_LABELS: Record<string, string> = {
+  title: "Title",
+  authors: "Authors",
+  publication_year: "Year",
+  venue: "Venue",
+  doi: "DOI",
+  arxiv_id: "arXiv",
+  citation_key: "Citation key",
+};
+
+function humanFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function previewValue(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "未填写";
+  if (Array.isArray(value)) return value.length > 0 ? value.join("、") : "未填写";
+  return String(value);
+}
+
+function shortBundleId(value: string): string {
+  return value.length > 12 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value;
+}
+
+function bundlePreviewErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    const code = error.problem?.detail?.code;
+    if (code && BUNDLE_PREVIEW_ERROR_MESSAGES[code]) return BUNDLE_PREVIEW_ERROR_MESSAGES[code];
+  }
+  return "研究包检查失败，请重新选择。";
+}
+
+function BundlePreviewCountSection({
+  title,
+  emptyLabel,
+  count,
+}: {
+  title: string;
+  emptyLabel: string;
+  count: PaperBundlePreviewCount;
+}) {
+  if (count.incoming === 0) {
+    return <section className="bundle-preview-section bundle-preview-count-section" data-testid={`bundle-preview-${title}`}>
+      <h3>{title}</h3>
+      <p className="bundle-preview-muted">研究包中没有{emptyLabel}。</p>
+    </section>;
+  }
+  return <section className="bundle-preview-section bundle-preview-count-section" data-testid={`bundle-preview-${title}`}>
+    <h3>{title}</h3>
+    <p>{count.incoming} 条内容：{count.new} 条将新增，{count.identical} 条已存在，{count.conflict} 条冲突。</p>
+    {count.conflicts.length > 0 && <details className="bundle-preview-conflicts">
+      <summary>查看冲突（{count.conflicts.length}）</summary>
+      <ul>{count.conflicts.map((id) => <li key={id}>对象 {shortBundleId(id)}</li>)}</ul>
+    </details>}
+  </section>;
 }
 
 function lookupSourceLabel(source: VocabularyLookupSource): string {
@@ -572,8 +654,12 @@ export function App() {
   const [compact, setCompact] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [papersPanelOpen, setPapersPanelOpen] = useState(() => readPanelOpen(PAPERS_PANEL_KEY, true));
-  const [paperPanelView, setPaperPanelView] = useState<"papers" | "metadata">("papers");
+  const [paperPanelView, setPaperPanelView] = useState<PaperPanelView>("papers");
   const paperMetadataPanelOpen = paperPanelView === "metadata";
+  const [bundlePreviewStatus, setBundlePreviewStatus] = useState<BundlePreviewStatus>("idle");
+  const [bundlePreviewFile, setBundlePreviewFile] = useState<BundlePreviewFile | null>(null);
+  const [bundlePreview, setBundlePreview] = useState<PaperBundlePreview | null>(null);
+  const [bundlePreviewError, setBundlePreviewError] = useState<string | null>(null);
   const [paperMetadata, setPaperMetadata] = useState<PaperMetadata | null>(null);
   const [paperMetadataStatus, setPaperMetadataStatus] = useState<"idle" | "loading" | "loaded" | "error">("idle");
   const [paperMetadataError, setPaperMetadataError] = useState<string | null>(null);
@@ -669,6 +755,9 @@ export function App() {
   const paperMetadataAbortRef = useRef<AbortController | null>(null);
   const paperMetadataSaveRequestRef = useRef(0);
   const paperMetadataSaveAbortRef = useRef<AbortController | null>(null);
+  const bundlePreviewRequestRef = useRef(0);
+  const bundlePreviewAbortRef = useRef<AbortController | null>(null);
+  const bundlePreviewInputRef = useRef<HTMLInputElement>(null);
   const annotationsPanelOpenRef = useRef(annotationsPanelOpen);
   const annotationCardOpenRef = useRef(false);
   const selectingTextRef = useRef(false);
@@ -1114,7 +1203,58 @@ export function App() {
     if (open) setToolbarSlim(false);
   }, []);
 
+  const resetBundlePreview = useCallback(() => {
+    bundlePreviewRequestRef.current += 1;
+    bundlePreviewAbortRef.current?.abort();
+    bundlePreviewAbortRef.current = null;
+    if (bundlePreviewInputRef.current) bundlePreviewInputRef.current.value = "";
+    setBundlePreviewStatus("idle");
+    setBundlePreviewFile(null);
+    setBundlePreview(null);
+    setBundlePreviewError(null);
+  }, []);
+
+  const handleBundleFile = useCallback((file: File | undefined) => {
+    if (!file) return;
+    const requestId = ++bundlePreviewRequestRef.current;
+    bundlePreviewAbortRef.current?.abort();
+    const controller = new AbortController();
+    bundlePreviewAbortRef.current = controller;
+    setBundlePreviewFile({ name: file.name, size: file.size });
+    setBundlePreview(null);
+    setBundlePreviewError(null);
+    setBundlePreviewStatus("validating");
+    void previewPaperBundle(file, controller.signal).then((result) => {
+      if (controller.signal.aborted || requestId !== bundlePreviewRequestRef.current) return;
+      setBundlePreview(result);
+      setBundlePreviewStatus("success");
+    }).catch((error: unknown) => {
+      if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) return;
+      if (requestId !== bundlePreviewRequestRef.current) return;
+      setBundlePreviewError(bundlePreviewErrorMessage(error));
+      setBundlePreviewStatus("error");
+    }).finally(() => {
+      if (requestId === bundlePreviewRequestRef.current) bundlePreviewAbortRef.current = null;
+    });
+  }, []);
+
+  const openBundlePreview = useCallback(() => {
+    resetBundlePreview();
+    setPaperPanelView("bundle-preview");
+  }, [resetBundlePreview]);
+
+  const closeBundlePreview = useCallback(() => {
+    resetBundlePreview();
+    setPaperPanelView("papers");
+  }, [resetBundlePreview]);
+
+  const chooseAnotherBundle = useCallback(() => {
+    resetBundlePreview();
+    window.setTimeout(() => bundlePreviewInputRef.current?.click(), 0);
+  }, [resetBundlePreview]);
+
   const updatePapersPanelOpen = useCallback((open: boolean) => {
+    resetBundlePreview();
     papersPanelOpenRef.current = open;
     setPapersPanelOpen(open);
     setPaperPanelView("papers");
@@ -1127,7 +1267,7 @@ export function App() {
     } else if (!open) {
       updateDrawerOpen(false);
     }
-  }, [compact, updateDrawerOpen]);
+  }, [compact, resetBundlePreview, updateDrawerOpen]);
 
   const updateAnnotationsPanelOpen = useCallback((open: boolean) => {
     annotationsPanelOpenRef.current = open;
@@ -2448,6 +2588,82 @@ export function App() {
     </section>
   ) : null;
 
+  const bundlePreviewPanel = (
+    <section className="paper-bundle-preview-panel" aria-label="预览研究包" data-testid="paper-bundle-preview-panel">
+      <header className="paper-metadata-heading">
+        <button type="button" className="paper-metadata-back" onClick={closeBundlePreview}>返回</button>
+        <div className="paper-metadata-heading-copy">
+          <strong>预览研究包</strong>
+          <span>当前仅预览，不会修改任何数据</span>
+        </div>
+        <button type="button" className="side-panel-close" aria-label="关闭论文面板" onClick={() => updatePapersPanelOpen(false)}>×</button>
+      </header>
+      <div className="bundle-preview-scroll">
+        <p className="bundle-preview-intro">选择 Caeliae Paper Bundle，系统会先检查文件完整性和数据冲突。此步骤不会修改本地数据。</p>
+        <label className="bundle-preview-file-picker">
+          <input
+            ref={bundlePreviewInputRef}
+            type="file"
+            accept=".caeliae-paper.zip,.zip,application/zip"
+            aria-label="选择研究包文件"
+            onChange={(event) => {
+              handleBundleFile(event.target.files?.[0]);
+              event.currentTarget.value = "";
+            }}
+          />
+          <span>{bundlePreviewStatus === "success" || bundlePreviewStatus === "error" ? "选择其他研究包" : "选择研究包"}</span>
+        </label>
+        {bundlePreviewFile && <p className="bundle-preview-file" data-testid="bundle-preview-file">{bundlePreviewFile.name} · {humanFileSize(bundlePreviewFile.size)}</p>}
+        <div className="bundle-preview-status" aria-live="polite" data-testid="bundle-preview-status">
+          {bundlePreviewStatus === "validating" && <p className="bundle-preview-muted" data-testid="bundle-preview-loading">正在检查研究包…</p>}
+          {bundlePreviewStatus === "error" && <div className="bundle-preview-error" role="alert" data-testid="bundle-preview-error">
+            <span>{bundlePreviewError ?? "研究包检查失败，请重新选择。"}</span>
+            <button type="button" onClick={chooseAnotherBundle}>重新选择</button>
+          </div>}
+        </div>
+        {bundlePreviewStatus === "success" && bundlePreview && <div className="bundle-preview-result" data-testid="bundle-preview-success">
+          <section className="bundle-preview-section" data-testid="bundle-preview-summary">
+            <h3>文件信息</h3>
+            <dl className="bundle-preview-fields">
+              <div><dt>Bundle</dt><dd>{bundlePreview.bundle.format} · v{bundlePreview.bundle.version}</dd></div>
+              <div><dt>论文文件</dt><dd>{bundlePreview.bundle.paper.original_filename}</dd></div>
+              <div><dt>页数</dt><dd>{bundlePreview.bundle.paper.page_count}</dd></div>
+              <div><dt>PDF identity</dt><dd title={bundlePreview.bundle.paper.content_sha256}>sha256:{bundlePreview.bundle.paper.content_sha256.slice(0, 12)}…</dd></div>
+            </dl>
+          </section>
+          <section className="bundle-preview-section" data-testid="bundle-preview-target">
+            <h3>目标论文</h3>
+            <p>{bundlePreview.target.paper_status === "existing" ? "本地已存在同一份 PDF" : "这篇论文尚未存在于本地"}</p>
+          </section>
+          <section className="bundle-preview-section" data-testid="bundle-preview-metadata">
+            <h3>文献信息</h3>
+            <p>{BUNDLE_METADATA_STATUS_LABELS[bundlePreview.target.metadata.status] ?? "文献信息状态未知"}</p>
+            {bundlePreview.target.metadata.differences.length > 0 && <div className="bundle-preview-differences">
+              {bundlePreview.target.metadata.differences.map((difference: PaperBundlePreviewDifference) => <div className="bundle-preview-difference" key={difference.field}>
+                <strong>{BUNDLE_METADATA_FIELD_LABELS[difference.field] ?? difference.field}</strong>
+                <span>本地：{previewValue(difference.current)}</span>
+                <span>研究包：{previewValue(difference.incoming)}</span>
+              </div>)}
+            </div>}
+          </section>
+          <BundlePreviewCountSection title="批注" emptyLabel="批注" count={bundlePreview.target.annotations} />
+          <BundlePreviewCountSection title="便签" emptyLabel="便签" count={bundlePreview.target.sticky_notes} />
+          <BundlePreviewCountSection title="大意" emptyLabel="大意" count={bundlePreview.target.summary_notes} />
+          <section className="bundle-preview-section" data-testid="bundle-preview-derived">
+            <h3>BibTeX</h3>
+            <p>{bundlePreview.derived.citation_bibtex === "valid" ? "BibTeX 校验通过" : bundlePreview.derived.citation_bibtex === "mismatch" ? "BibTeX 与文献信息不一致" : "无 BibTeX 文件"}</p>
+            <small>BibTeX 是派生文件，不作为文献信息来源。</small>
+          </section>
+          <section className={`bundle-preview-importability${bundlePreview.can_import ? " is-ok" : " is-conflict"}`} data-testid="bundle-preview-importability" aria-live="polite">
+            <strong>{bundlePreview.can_import ? "未发现阻塞冲突" : "发现需要处理的冲突"}</strong>
+            <span>当前页面仅预览，不会写入数据。</span>
+            {!bundlePreview.can_import && bundlePreview.blocking_conflicts.length > 0 && <ul>{bundlePreview.blocking_conflicts.map((conflict) => <li key={conflict}>{conflict === "metadata" ? "文献信息存在差异" : conflict === "annotations" ? "批注存在冲突" : conflict === "sticky_notes" ? "便签存在冲突" : conflict === "summary_notes" ? "大意存在冲突" : "存在需要处理的冲突"}</li>)}</ul>}
+          </section>
+        </div>}
+      </div>
+    </section>
+  );
+
   const paperList = (
     <div className="paper-list" data-testid="paper-list-view">
       {papers.map((item) => (
@@ -2485,11 +2701,14 @@ export function App() {
       </header>
 
       <section className={`workspace${compact ? " compact" : ""}`} data-layout={compact ? "compact" : "desktop"} data-drawer-open={drawerOpen} data-papers-open={papersPanelOpen} data-annotations-open={showAnnotationPanel} data-annotation-card-open={annotationCardOpen} data-active-annotation-id={activeAnnotationId ?? ""} data-selecting-text={isSelectingText} ref={workspaceRef}>
-        <aside className="library side-panel" aria-label={paperPanelView === "metadata" ? "文献信息" : "论文列表"}>
-          {paperPanelView === "metadata" && paperMetadataPanel ? paperMetadataPanel : <>
+        <aside className="library side-panel" aria-label={paperPanelView === "metadata" ? "文献信息" : paperPanelView === "bundle-preview" ? "预览研究包" : "论文列表"}>
+          {paperPanelView === "metadata" && paperMetadataPanel ? paperMetadataPanel : paperPanelView === "bundle-preview" ? bundlePreviewPanel : <>
             <div className="section-heading side-panel-heading">
               <span>本地论文 <small>{papers.length}</small></span>
-              <button type="button" className="side-panel-close" aria-label="关闭论文面板" onClick={() => updatePapersPanelOpen(false)}>×</button>
+              <div className="side-panel-heading-actions">
+                <button type="button" className="paper-bundle-preview-trigger" data-testid="paper-bundle-preview-open" onClick={openBundlePreview}>预览研究包</button>
+                <button type="button" className="side-panel-close" aria-label="关闭论文面板" onClick={() => updatePapersPanelOpen(false)}>×</button>
+              </div>
             </div>
             {paperList}
             <button type="button" className="paper-metadata-trigger" data-testid="paper-metadata-open" disabled={!paper} onClick={openPaperMetadata}>文献信息</button>
@@ -2536,7 +2755,7 @@ export function App() {
           </nav>}
            {stickyPlacementMode && <div className="sticky-placement-hint" role="status">{STICKY_PLACEMENT_MESSAGE}</div>}
            {summaryPlacementMode && <div className="summary-placement-hint" role="status">{SUMMARY_PLACEMENT_MESSAGE}</div>}
-           {compact && drawerOpen && <div className="paper-drawer" role="dialog" aria-label={paperPanelView === "metadata" ? "文献信息" : "选择论文"} onClick={() => updatePapersPanelOpen(false)}><div className="paper-drawer-panel" onClick={(e) => e.stopPropagation()}>{paperPanelView === "metadata" && paperMetadataPanel ? paperMetadataPanel : <><header><strong>本地论文（{papers.length}）</strong><div className="paper-drawer-actions"><button type="button" className="paper-metadata-drawer-trigger" disabled={!paper} onClick={openPaperMetadata}>文献信息</button><button type="button" onClick={() => updatePapersPanelOpen(false)} aria-label="关闭论文列表">×</button></div></header><div className="paper-list" data-testid="paper-list-view">{papers.map((item) => <button className={item.paper_id === paper?.paper_id ? "paper-card active" : "paper-card"} key={item.paper_id} type="button" title={item.original_filename} onClick={() => { void openPaper(item); updatePapersPanelOpen(false); }}><strong>{item.original_filename}</strong><span>{item.page_count} 页</span></button>)}</div></>}</div></div>}
+           {compact && drawerOpen && <div className="paper-drawer" role="dialog" aria-label={paperPanelView === "metadata" ? "文献信息" : paperPanelView === "bundle-preview" ? "预览研究包" : "选择论文"} onClick={() => updatePapersPanelOpen(false)}><div className="paper-drawer-panel" onClick={(e) => e.stopPropagation()}>{paperPanelView === "metadata" && paperMetadataPanel ? paperMetadataPanel : paperPanelView === "bundle-preview" ? bundlePreviewPanel : <><header><strong>本地论文（{papers.length}）</strong><div className="paper-drawer-actions"><button type="button" className="paper-bundle-preview-trigger" data-testid="paper-bundle-preview-open" onClick={openBundlePreview}>预览研究包</button><button type="button" className="paper-metadata-drawer-trigger" disabled={!paper} onClick={openPaperMetadata}>文献信息</button><button type="button" onClick={() => updatePapersPanelOpen(false)} aria-label="关闭论文列表">×</button></div></header><div className="paper-list" data-testid="paper-list-view">{papers.map((item) => <button className={item.paper_id === paper?.paper_id ? "paper-card active" : "paper-card"} key={item.paper_id} type="button" title={item.original_filename} onClick={() => { void openPaper(item); updatePapersPanelOpen(false); }}><strong>{item.original_filename}</strong><span>{item.page_count} 页</span></button>)}</div></>}</div></div>}
           {selectionComposerDraft && <aside
             ref={selectionComposerRef}
             className={`selection-composer${overlayDragging === "composer" ? " is-overlay-dragging" : ""}${overlayResizing === "composer" ? " is-overlay-resizing" : ""}`}

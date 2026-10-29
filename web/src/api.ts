@@ -32,6 +32,52 @@ export interface PaperMetadataEnvelope {
   metadata: PaperMetadata | null;
 }
 
+export interface PaperBundlePreviewDifference {
+  field: string;
+  current: unknown;
+  incoming: unknown;
+}
+
+export interface PaperBundlePreviewCount {
+  incoming: number;
+  new: number;
+  identical: number;
+  conflict: number;
+  conflicts: string[];
+}
+
+export interface PaperBundlePreview {
+  valid: true;
+  bundle: {
+    format: string;
+    version: string;
+    exported_at: string;
+    paper: {
+      content_sha256: string;
+      mime_type: string;
+      size_bytes: number;
+      page_count: number;
+      original_filename: string;
+    };
+  };
+  target: {
+    paper_status: "new" | "existing";
+    paper_id: string | null;
+    metadata: {
+      status: "incoming_absent" | "no_change" | "would_create" | "identical" | "conflict";
+      differences: PaperBundlePreviewDifference[];
+    };
+    annotations: PaperBundlePreviewCount;
+    sticky_notes: PaperBundlePreviewCount;
+    summary_notes: PaperBundlePreviewCount;
+  };
+  derived: {
+    citation_bibtex: "absent" | "valid" | "mismatch";
+  };
+  can_import: boolean;
+  blocking_conflicts: string[];
+}
+
 export interface Quad {
   x: number;
   y: number;
@@ -185,6 +231,12 @@ export async function updatePaperMetadata(
     body: JSON.stringify(payload),
     signal,
   })).then((r) => r.json());
+}
+
+export async function previewPaperBundle(file: File, signal?: AbortSignal): Promise<PaperBundlePreview> {
+  const body = new FormData();
+  body.append("bundle", file, file.name);
+  return checked(await fetch("/api/paper-bundles/preview", { method: "POST", body, signal })).then((r) => r.json());
 }
 
 export async function createSession(paperId: string): Promise<{ paper_id: string; session_id: string }> {
