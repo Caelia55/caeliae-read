@@ -15,7 +15,9 @@ from datetime import UTC, datetime
 from pypdf import PdfReader
 
 from caeliae_read.application.bundle_export import PaperBundleExport, assemble_paper_bundle
+from caeliae_read.application.bundle_preview import build_bundle_preview
 from caeliae_read.bibtex import BibtexSerializationError, BibtexSerializationResult, serialize_bibtex_result
+from caeliae_read.bundle_import import BundleValidationError, parse_paper_bundle
 from caeliae_read.bundle import BundleSerializationError
 from caeliae_read.config import Settings, get_settings
 from caeliae_read.application.paper_metadata import PaperMetadataNormalizationError, normalize_paper_metadata
@@ -67,6 +69,14 @@ class PaperStorageIntegrityError(PaperBundleExportError):
 
 class PaperBundleSerializationError(PaperBundleExportError):
     code = "paper_bundle_serialization_error"
+
+
+class PaperBundlePreviewError(CaeliaeReadError):
+    """Stable API error for a rejected read-only bundle preview."""
+
+    def __init__(self, code: str, message: str):
+        self.code = code
+        super().__init__(message)
 
 
 class SessionNotFoundError(CaeliaeReadError):
@@ -332,6 +342,15 @@ class CaeliaeReadService:
             )
         except BundleSerializationError as error:
             raise PaperBundleSerializationError("paper bundle could not be serialized") from error
+
+    def preview_paper_bundle(self, archive_bytes: bytes) -> dict[str, object]:
+        """Validate and compare a bundle without creating or updating any row."""
+
+        try:
+            parsed = parse_paper_bundle(archive_bytes)
+        except BundleValidationError as error:
+            raise PaperBundlePreviewError(error.code, str(error)) from error
+        return build_bundle_preview(self.repository, parsed)
 
     def create_session(self, paper_id: str) -> dict[str, str]:
         paper_id = require_uuid(paper_id, "paper_id")

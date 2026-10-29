@@ -28,10 +28,12 @@ from caeliae_read.application.service import (
     ValidationError,
     PaperMetadataValidationError,
     PaperBundleExportError,
+    PaperBundlePreviewError,
     VocabularyNotFoundError,
     get_service,
     require_uuid,
 )
+from caeliae_read.bundle_import import MAX_ARCHIVE_BYTES
 from caeliae_read.application.lookup import LookupProvider, VocabularyLookupService, get_lookup_provider
 from caeliae_read.config import PROJECT_ROOT, get_allowed_origins, get_settings
 
@@ -54,7 +56,7 @@ def problem(error: CaeliaeReadError) -> HTTPException:
         code = status.HTTP_409_CONFLICT
     elif isinstance(error, (PaperNotFoundError, SessionNotFoundError, ReadingNotFoundError, VocabularyNotFoundError)):
         code = status.HTTP_404_NOT_FOUND
-    elif isinstance(error, (ReadingValidationError, PaperMetadataValidationError, PaperBundleExportError)):
+    elif isinstance(error, (ReadingValidationError, PaperMetadataValidationError, PaperBundleExportError, PaperBundlePreviewError)):
         code = status.HTTP_422_UNPROCESSABLE_CONTENT
     else:
         code = status.HTTP_400_BAD_REQUEST
@@ -211,6 +213,27 @@ def create_app(
             media_type="application/zip",
             headers={"Content-Disposition": f'attachment; filename="{result.filename}"'},
         )
+
+    @app.post("/api/paper-bundles/preview")
+    async def preview_paper_bundle(bundle: UploadFile = File(...)) -> dict[str, object]:
+        """Validate a Portable Paper Bundle and return a read-only preview."""
+
+        chunks: list[bytes] = []
+        total = 0
+        try:
+            while chunk := await bundle.read(64 * 1024):
+                total += len(chunk)
+                if total > MAX_ARCHIVE_BYTES:
+                    raise PaperBundlePreviewError(
+                        "unsafe_bundle_archive",
+                        "bundle archive exceeds the V1 upload limit",
+                    )
+                chunks.append(chunk)
+            return read_service.preview_paper_bundle(b"".join(chunks))
+        except CaeliaeReadError as error:
+            raise problem(error) from error
+        finally:
+            await bundle.close()
 
     @app.post("/api/papers/{paper_id}/sessions", status_code=status.HTTP_201_CREATED)
     async def create_session(paper_id: str) -> dict[str, str]:
